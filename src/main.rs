@@ -238,6 +238,7 @@ fn main() -> Result<(), String> {
     // None = test pattern, Some(idx) = effects[idx]
     // Clamp start_effect to valid range
     let mut current_effect: Option<usize> = start_effect.map(|e: usize| e.min(effects.len() - 1));
+    eprintln!("DEBUG: start_effect={:?}, effects.len()={}, current_effect={:?}", start_effect, effects.len(), current_effect);
 
     // Calibration mode
     let mut calibration = CalibrationMode::new(scene);
