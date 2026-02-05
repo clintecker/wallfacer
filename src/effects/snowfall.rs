@@ -75,7 +75,7 @@ impl Snowfall {
     fn scene_fingerprint(scene: &Scene) -> u64 {
         let mut h: u64 = scene.regions.len() as u64;
         for region in &scene.regions {
-            for v in &region.polygon.vertices {
+            for v in &region.polygon().vertices {
                 h = h.wrapping_mul(31).wrapping_add(v.x.to_bits() as u64);
                 h = h.wrapping_mul(31).wrapping_add(v.y.to_bits() as u64);
             }
@@ -94,7 +94,7 @@ impl Snowfall {
 
         // For each region, scan columns to find top and bottom of region surface
         for region in &scene.regions {
-            if let Some((min_x, min_y, max_x, max_y)) = region.polygon.bounds() {
+            if let Some((min_x, min_y, max_x, max_y)) = region.polygon().bounds() {
                 let x0 = (min_x as i32).max(0) as usize;
                 let x1 = ((max_x as i32) + 1).min(width as i32) as usize;
                 let y_start = (min_y as i32).max(0);
@@ -106,7 +106,7 @@ impl Snowfall {
                     let mut found = false;
 
                     for row in y_start..y_end {
-                        if region.polygon.contains(col as f32 + 0.5, row as f32 + 0.5) {
+                        if region.polygon().contains(col as f32 + 0.5, row as f32 + 0.5) {
                             if !found {
                                 this_top = row;
                                 found = true;
@@ -166,9 +166,19 @@ impl Snowfall {
         let f = &mut self.flakes[self.active];
         f.x = self.rng.range_f32(0.0, width as f32);
         f.y = self.rng.range_f32(-20.0, 0.0);
-        f.vy = self.rng.range_f32(40.0, 120.0);
-        f.size = if self.rng.next_f32() < 0.3 { 2 } else { 1 };
-        f.brightness = 180 + (self.rng.next_u32() % 76) as u8;
+        // Larger flakes fall slower (more realistic)
+        let size_roll = self.rng.next_f32();
+        f.size = if size_roll < 0.15 {
+            4 // 15% large fluffy flakes
+        } else if size_roll < 0.40 {
+            3 // 25% medium flakes
+        } else if size_roll < 0.70 {
+            2 // 30% small flakes
+        } else {
+            1 // 30% tiny flakes
+        };
+        f.vy = self.rng.range_f32(30.0, 80.0) + (5 - f.size) as f32 * 15.0;
+        f.brightness = 200 + (self.rng.next_u32() % 56) as u8;
         self.active += 1;
     }
 }
@@ -358,17 +368,34 @@ impl Effect for Snowfall {
             }
         }
 
-        // Falling flakes
+        // Falling flakes - varied sizes for depth
         for i in 0..self.active {
             let f = &self.flakes[i];
             let px = f.x as i32;
             let py = f.y as i32;
             let b = f.brightness;
-            buffer.set_pixel(px, py, b, b, b);
-            if f.size > 1 {
-                buffer.set_pixel(px + 1, py, b, b, b);
-                buffer.set_pixel(px, py + 1, b, b, b);
-                buffer.set_pixel(px + 1, py + 1, b, b, b);
+            match f.size {
+                1 => {
+                    buffer.set_pixel(px, py, b, b, b);
+                },
+                2 => {
+                    buffer.set_pixel(px, py, b, b, b);
+                    buffer.set_pixel(px + 1, py, b, b, b);
+                    buffer.set_pixel(px, py + 1, b, b, b);
+                    buffer.set_pixel(px + 1, py + 1, b, b, b);
+                },
+                3 => {
+                    // 3x3 cross pattern
+                    buffer.set_pixel(px, py, b, b, b);
+                    buffer.set_pixel(px - 1, py, b, b, b);
+                    buffer.set_pixel(px + 1, py, b, b, b);
+                    buffer.set_pixel(px, py - 1, b, b, b);
+                    buffer.set_pixel(px, py + 1, b, b, b);
+                },
+                _ => {
+                    // 5-pixel diamond + corners for fluffy look
+                    buffer.fill_circle(px, py, 2, b, b, b);
+                },
             }
         }
     }

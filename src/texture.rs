@@ -58,8 +58,17 @@ impl Texture {
     /// Fast nearest-neighbor sample using texel coordinates with bitmask wrapping.
     /// Only works correctly for power-of-2 sized textures.
     /// Takes texel-space coordinates (not UV), handles negatives via two's complement.
+    ///
+    /// # Panics
+    /// Debug-asserts that width and height are powers of 2.
     #[inline]
     pub fn sample_texel(&self, tx: i32, ty: i32) -> (u8, u8, u8) {
+        debug_assert!(
+            self.width.is_power_of_two() && self.height.is_power_of_two(),
+            "sample_texel requires power-of-2 dimensions, got {}x{}",
+            self.width,
+            self.height
+        );
         let x = (tx as u32) & (self.width - 1);
         let y = (ty as u32) & (self.height - 1);
         let idx = ((y * self.width + x) * 4) as usize;
@@ -182,8 +191,17 @@ impl IndexedTexture {
     }
 
     /// Fast sample with bitmask wrapping (power-of-2 only)
+    ///
+    /// # Panics
+    /// Debug-asserts that width and height are powers of 2.
     #[inline]
     pub fn sample_index(&self, tx: i32, ty: i32) -> u8 {
+        debug_assert!(
+            self.width.is_power_of_two() && self.height.is_power_of_two(),
+            "sample_index requires power-of-2 dimensions, got {}x{}",
+            self.width,
+            self.height
+        );
         let x = (tx as u32) & (self.width - 1);
         let y = (ty as u32) & (self.height - 1);
         self.indices[(y * self.width + x) as usize]

@@ -46,8 +46,15 @@ impl Rng {
     }
 
     /// Get a random i32 in [min, max]
+    ///
+    /// # Panics
+    /// Panics in debug builds if `min > max`
     #[inline]
     pub fn range_i32(&mut self, min: i32, max: i32) -> i32 {
+        debug_assert!(min <= max, "range_i32: min ({}) must be <= max ({})", min, max);
+        if min >= max {
+            return min;
+        }
         let range = (max - min + 1) as u64;
         min + (self.next_u64() % range) as i32
     }
@@ -126,7 +133,8 @@ impl FpsCounter {
         }
 
         let current_fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
-        let avg_dt: f32 = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
+        let avg_dt: f32 =
+            self.frame_times.iter().sum::<f32>() / self.frame_times.len().max(1) as f32;
         let avg_fps = if avg_dt > 0.0 { 1.0 / avg_dt } else { 0.0 };
 
         (dt, current_fps, avg_fps)
@@ -153,5 +161,43 @@ impl FpsCounter {
         let max_fps = if min_dt > 0.0 { 1.0 / min_dt } else { 0.0 };
         let min_fps = if max_dt > 0.0 { 1.0 / max_dt } else { 0.0 };
         (min_fps, max_fps)
+    }
+
+    /// Get total number of frames recorded
+    pub fn frame_count(&self) -> usize {
+        self.frame_times.len()
+    }
+
+    /// Get standard deviation of frame times in milliseconds
+    pub fn std_dev_ms(&self) -> f32 {
+        if self.frame_times.len() < 2 {
+            return 0.0;
+        }
+        let mean = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
+        let variance = self.frame_times.iter()
+            .map(|&dt| (dt - mean).powi(2))
+            .sum::<f32>() / self.frame_times.len() as f32;
+        variance.sqrt() * 1000.0
+    }
+
+    /// Get percentile frame times in milliseconds (sorted copy)
+    /// Returns (1st percentile, 50th/median, 99th percentile)
+    pub fn percentiles_ms(&self) -> (f32, f32, f32) {
+        if self.frame_times.is_empty() {
+            return (0.0, 0.0, 0.0);
+        }
+        let mut sorted: Vec<f32> = self.frame_times.iter().cloned().collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let len = sorted.len();
+        let p1_idx = (len as f32 * 0.01).floor() as usize;
+        let p50_idx = len / 2;
+        let p99_idx = ((len as f32 * 0.99).floor() as usize).min(len - 1);
+
+        (
+            sorted[p1_idx] * 1000.0,
+            sorted[p50_idx] * 1000.0,
+            sorted[p99_idx] * 1000.0,
+        )
     }
 }

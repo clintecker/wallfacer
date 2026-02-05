@@ -6,7 +6,7 @@
 use super::Effect;
 use crate::display::{draw_text_scaled, text_width_scaled, PixelBuffer, GLYPH_HEIGHT};
 use crate::geometry::{rect_polygon_collision, reflect};
-use crate::regions::Scene;
+use crate::regions::{Scene, Shape};
 use crate::util::hsv_to_rgb;
 
 const LOGO_TEXT: &str = "DVD";
@@ -49,20 +49,46 @@ impl Dvd {
         self.hue = (self.hue + 45.0 + (self.vx.abs() * 0.5) as f32) % 360.0;
     }
 
-    /// Check bounding box against all polygon regions
+    /// Check bounding box against all regions (polygons and circles)
     /// Returns (normal_x, normal_y, push_distance) if collision detected
-    fn check_polygon_collision(&self, scene: &Scene) -> Option<(f32, f32, f32)> {
+    fn check_region_collision(&self, scene: &Scene) -> Option<(f32, f32, f32)> {
+        let half_w = self.logo_width as f32 / 2.0;
+        let half_h = self.logo_height as f32 / 2.0;
+        let center_x = self.x + half_w;
+        let center_y = self.y + half_h;
+
         for region in &scene.regions {
-            let verts = region.polygon.as_tuples();
-            // Use full rectangle collision - handles diagonal edges properly
-            if let Some((nx, ny, dist)) = rect_polygon_collision(
-                self.x,
-                self.y,
-                self.logo_width as f32,
-                self.logo_height as f32,
-                &verts,
-            ) {
-                return Some((nx, ny, dist));
+            let collision = match region.get_shape() {
+                Shape::Polygon(p) => {
+                    let verts = p.as_tuples();
+                    rect_polygon_collision(
+                        self.x,
+                        self.y,
+                        self.logo_width as f32,
+                        self.logo_height as f32,
+                        &verts,
+                    )
+                }
+                Shape::Circle(c) => {
+                    // Approximate rect-circle collision using center distance
+                    let dx = center_x - c.center.x;
+                    let dy = center_y - c.center.y;
+                    let dist_sq = dx * dx + dy * dy;
+                    let effective_radius = c.radius + half_w.max(half_h);
+                    if dist_sq < effective_radius * effective_radius && dist_sq > 0.001 {
+                        let dist = dist_sq.sqrt();
+                        let nx = dx / dist;
+                        let ny = dy / dist;
+                        let penetration = effective_radius - dist;
+                        Some((nx, ny, penetration))
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if collision.is_some() {
+                return collision;
             }
         }
 
@@ -139,8 +165,8 @@ impl Effect for Dvd {
             self.y = new_y;
         }
 
-        // Polygon collision
-        if let Some((nx, ny, dist)) = self.check_polygon_collision(scene) {
+        // Region collision (polygons and circles)
+        if let Some((nx, ny, dist)) = self.check_region_collision(scene) {
             let (new_vx, new_vy) = reflect(self.vx, self.vy, nx, ny);
             self.vx = new_vx;
             self.vy = new_vy;

@@ -6,7 +6,7 @@
 use super::Effect;
 use crate::display::PixelBuffer;
 use crate::geometry::{rect_polygon_collision, reflect};
-use crate::regions::Scene;
+use crate::regions::{Scene, Shape};
 use crate::util::{hsv_to_rgb, Rng};
 
 const MAX_WORMS: usize = 24;
@@ -137,24 +137,45 @@ impl Worm {
             bounced = true;
         }
 
-        // Bounce off polygon regions - treat worm head as a small bounding box
+        // Bounce off regions - treat worm head as a small bounding box
         let head_size = seg_size + 1.0;
         let half_size = head_size / 2.0;
         for region in &scene.regions {
-            let verts = region.polygon.as_tuples();
-            // Check collision using rectangle around head position
-            if let Some((nx, ny, dist)) = rect_polygon_collision(
-                new_x - half_size,
-                new_y - half_size,
-                head_size,
-                head_size,
-                &verts,
-            ) {
+            let collision = match region.get_shape() {
+                Shape::Polygon(p) => {
+                    let verts = p.as_tuples();
+                    rect_polygon_collision(
+                        new_x - half_size,
+                        new_y - half_size,
+                        head_size,
+                        head_size,
+                        &verts,
+                    )
+                }
+                Shape::Circle(c) => {
+                    // Simple rect-circle collision
+                    let dx = new_x - c.center.x;
+                    let dy = new_y - c.center.y;
+                    let dist_sq = dx * dx + dy * dy;
+                    let effective_radius = c.radius + half_size;
+                    if dist_sq < effective_radius * effective_radius && dist_sq > 0.001 {
+                        let dist = dist_sq.sqrt();
+                        let nx = dx / dist;
+                        let ny = dy / dist;
+                        let penetration = effective_radius - dist;
+                        Some((nx, ny, penetration))
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if let Some((nx, ny, dist)) = collision {
                 // Reflect direction
                 let (new_dx, new_dy) = reflect(self.direction.cos(), self.direction.sin(), nx, ny);
                 self.direction = new_dy.atan2(new_dx);
 
-                // Push out of polygon: distance to edge + margin
+                // Push out of region
                 let push_dist = dist + 6.0;
                 new_x += nx * push_dist;
                 new_y += ny * push_dist;

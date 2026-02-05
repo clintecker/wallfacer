@@ -64,7 +64,7 @@ impl Ripples {
     fn scene_fingerprint(scene: &Scene) -> u64 {
         let mut h: u64 = scene.regions.len() as u64;
         for region in &scene.regions {
-            for v in &region.polygon.vertices {
+            for v in &region.polygon().vertices {
                 h = h.wrapping_mul(31).wrapping_add(v.x.to_bits() as u64);
                 h = h.wrapping_mul(31).wrapping_add(v.y.to_bits() as u64);
             }
@@ -85,8 +85,8 @@ impl Ripples {
 
         self.frames.clear();
         for region in &scene.regions {
-            if let Some((min_x, min_y, max_x, max_y)) = region.polygon.bounds() {
-                if let Some(c) = region.polygon.centroid() {
+            if let Some((min_x, min_y, max_x, max_y)) = region.polygon().bounds() {
+                if let Some(c) = region.polygon().centroid() {
                     self.frames.push(FrameInfo {
                         cx: c.x,
                         cy: c.y,

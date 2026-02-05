@@ -14,8 +14,13 @@ pub fn point_in_polygon(px: f32, py: f32, vertices: &[(f32, f32)]) -> bool {
         let (xi, yi) = vertices[i];
         let (xj, yj) = vertices[j];
 
-        if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
-            inside = !inside;
+        // Skip horizontal edges (avoid division by zero)
+        let dy = yj - yi;
+        if dy.abs() > f32::EPSILON && ((yi > py) != (yj > py)) {
+            let x_intersect = (xj - xi) * (py - yi) / dy + xi;
+            if px < x_intersect {
+                inside = !inside;
+            }
         }
         j = i;
     }

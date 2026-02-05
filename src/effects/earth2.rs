@@ -372,7 +372,7 @@ impl Effect for Earth2 {
 
         // Polygon region collision (circle around globe center)
         for region in &scene.regions {
-            let verts = region.polygon.as_tuples();
+            let verts = region.polygon().as_tuples();
             if let Some((nx, ny, penetration)) =
                 circle_polygon_collision(self.pos_x, self.pos_y, visual_radius, &verts)
             {

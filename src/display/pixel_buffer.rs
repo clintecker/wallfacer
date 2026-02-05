@@ -113,15 +113,18 @@ impl PixelBuffer {
         // Create ABGR u32 pattern
         let pixel = u32::from_ne_bytes([255, b, g, r]);
 
-        // Safety: pixels.len() is always divisible by 4 (width * height * 4)
-        // and properly aligned since Vec<u8> from vec![0; N] is aligned
+        // Safety: pixels.len() is always divisible by 4 (width * height * 4).
+        // We use write_unaligned to avoid assuming alignment of Vec<u8>.
         let ptr = self.pixels.as_mut_ptr() as *mut u32;
         let len = self.pixels.len() / 4;
 
         // Fill using u32 writes (4x faster than byte-by-byte)
         for i in 0..len {
+            // Safety: i < len ensures we stay within bounds, and we use
+            // write_unaligned for portability across platforms with different
+            // alignment requirements.
             unsafe {
-                *ptr.add(i) = pixel;
+                ptr.add(i).write_unaligned(pixel);
             }
         }
     }
@@ -132,8 +135,9 @@ impl PixelBuffer {
         let ptr = self.pixels.as_mut_ptr() as *mut u32;
         let len = self.pixels.len() / 4;
         for i in 0..len {
+            // Safety: same as clear() - bounds checked and unaligned write
             unsafe {
-                *ptr.add(i) = pixel;
+                ptr.add(i).write_unaligned(pixel);
             }
         }
     }
@@ -488,6 +492,9 @@ impl PixelBuffer {
         const RIGHT: u8 = 2;
         const BOTTOM: u8 = 4;
         const TOP: u8 = 8;
+        // Max iterations to prevent infinite loops with degenerate input (NaN, etc.)
+        // Algorithm should converge in at most 4 iterations for valid input
+        const MAX_ITERATIONS: u32 = 16;
 
         let w = self.width as i32;
         let h = self.height as i32;
@@ -510,7 +517,7 @@ impl PixelBuffer {
         let mut code0 = outcode(x0, y0);
         let mut code1 = outcode(x1, y1);
 
-        loop {
+        for _ in 0..MAX_ITERATIONS {
             if (code0 | code1) == 0 {
                 // Both inside
                 return (true, x0, y0, x1, y1);
@@ -524,18 +531,34 @@ impl PixelBuffer {
             let code_out = if code0 != 0 { code0 } else { code1 };
             let (x, y);
 
+            // Guard against division by zero
+            let dy = y1 - y0;
+            let dx = x1 - x0;
+
             if (code_out & BOTTOM) != 0 {
-                x = x0 + (x1 - x0) * (h - 1 - y0) / (y1 - y0);
+                if dy == 0 {
+                    return (false, 0, 0, 0, 0);
+                }
+                x = x0 + dx * (h - 1 - y0) / dy;
                 y = h - 1;
             } else if (code_out & TOP) != 0 {
-                x = x0 + (x1 - x0) * (0 - y0) / (y1 - y0);
+                if dy == 0 {
+                    return (false, 0, 0, 0, 0);
+                }
+                x = x0 + dx * (0 - y0) / dy;
                 y = 0;
             } else if (code_out & RIGHT) != 0 {
-                y = y0 + (y1 - y0) * (w - 1 - x0) / (x1 - x0);
+                if dx == 0 {
+                    return (false, 0, 0, 0, 0);
+                }
+                y = y0 + dy * (w - 1 - x0) / dx;
                 x = w - 1;
             } else {
                 // LEFT
-                y = y0 + (y1 - y0) * (0 - x0) / (x1 - x0);
+                if dx == 0 {
+                    return (false, 0, 0, 0, 0);
+                }
+                y = y0 + dy * (0 - x0) / dx;
                 x = 0;
             }
 
@@ -549,6 +572,9 @@ impl PixelBuffer {
                 code1 = outcode(x1, y1);
             }
         }
+
+        // Max iterations exceeded (degenerate input) - reject line
+        (false, 0, 0, 0, 0)
     }
 
     /// Draw a line with variable thickness
@@ -1119,6 +1145,76 @@ impl PixelBuffer {
     /// Mutable access to raw pixels for advanced effects
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.pixels
+    }
+
+    /// Create a new buffer rotated by 90 degrees clockwise.
+    /// Output dimensions are swapped (width becomes height, height becomes width).
+    pub fn rotated_90(&self) -> Self {
+        let new_width = self.height;
+        let new_height = self.width;
+        let mut rotated = Self::with_size(new_width, new_height);
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                // (x, y) -> (height - 1 - y, x) with swapped dimensions
+                let new_x = self.height - 1 - y;
+                let new_y = x;
+
+                let src_idx = self.pixel_index(x, y);
+                let dst_idx = rotated.pixel_index(new_x, new_y);
+
+                rotated.pixels[dst_idx..dst_idx + 4]
+                    .copy_from_slice(&self.pixels[src_idx..src_idx + 4]);
+            }
+        }
+
+        rotated
+    }
+
+    /// Create a new buffer rotated by 180 degrees.
+    /// Output dimensions remain the same.
+    pub fn rotated_180(&self) -> Self {
+        let mut rotated = Self::with_size(self.width, self.height);
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                // (x, y) -> (width - 1 - x, height - 1 - y)
+                let new_x = self.width - 1 - x;
+                let new_y = self.height - 1 - y;
+
+                let src_idx = self.pixel_index(x, y);
+                let dst_idx = rotated.pixel_index(new_x, new_y);
+
+                rotated.pixels[dst_idx..dst_idx + 4]
+                    .copy_from_slice(&self.pixels[src_idx..src_idx + 4]);
+            }
+        }
+
+        rotated
+    }
+
+    /// Create a new buffer rotated by 270 degrees clockwise (90 degrees counter-clockwise).
+    /// Output dimensions are swapped (width becomes height, height becomes width).
+    pub fn rotated_270(&self) -> Self {
+        let new_width = self.height;
+        let new_height = self.width;
+        let mut rotated = Self::with_size(new_width, new_height);
+
+        for y in 0..self.height {
+            for x in 0..self.width {
+                // (x, y) -> (y, width - 1 - x) with swapped dimensions
+                let new_x = y;
+                let new_y = self.width - 1 - x;
+
+                let src_idx = self.pixel_index(x, y);
+                let dst_idx = rotated.pixel_index(new_x, new_y);
+
+                rotated.pixels[dst_idx..dst_idx + 4]
+                    .copy_from_slice(&self.pixels[src_idx..src_idx + 4]);
+            }
+        }
+
+        rotated
     }
 
     // ========================================================================

@@ -9,73 +9,14 @@ use super::Effect;
 use crate::display::PixelBuffer;
 use crate::geometry::{circle_polygon_collision, reflect};
 use crate::math3d::{project, Mesh, Vec3};
+use crate::noise::fbm;
 use crate::regions::Scene;
 use crate::texture::Texture;
+use crate::util::Rng;
 
 // Texture dimensions (power of 2 width for fast sampling)
 const TEX_W: u32 = 512;
 const TEX_H: u32 = 256;
-
-// ============================================================================
-// Value Noise with FBM
-// ============================================================================
-
-/// Hash-based pseudo-random value for integer grid coordinates
-fn noise_hash(x: i32, y: i32, z: i32, seed: u32) -> f32 {
-    let mut h = seed.wrapping_add(x as u32).wrapping_mul(374761393);
-    h = h.wrapping_add(y as u32).wrapping_mul(668265263);
-    h = h.wrapping_add(z as u32).wrapping_mul(2147483647);
-    h = (h ^ (h >> 13)).wrapping_mul(1274126177);
-    h = h ^ (h >> 16);
-    (h & 0x7fff) as f32 / 0x7fff as f32
-}
-
-/// Smoothstep interpolation
-fn smoothstep(t: f32) -> f32 {
-    t * t * (3.0 - 2.0 * t)
-}
-
-/// 3D value noise with smoothstep interpolation
-fn value_noise(x: f32, y: f32, z: f32, seed: u32) -> f32 {
-    let ix = x.floor() as i32;
-    let iy = y.floor() as i32;
-    let iz = z.floor() as i32;
-    let fx = smoothstep(x - ix as f32);
-    let fy = smoothstep(y - iy as f32);
-    let fz = smoothstep(z - iz as f32);
-
-    let c000 = noise_hash(ix, iy, iz, seed);
-    let c100 = noise_hash(ix + 1, iy, iz, seed);
-    let c010 = noise_hash(ix, iy + 1, iz, seed);
-    let c110 = noise_hash(ix + 1, iy + 1, iz, seed);
-    let c001 = noise_hash(ix, iy, iz + 1, seed);
-    let c101 = noise_hash(ix + 1, iy, iz + 1, seed);
-    let c011 = noise_hash(ix, iy + 1, iz + 1, seed);
-    let c111 = noise_hash(ix + 1, iy + 1, iz + 1, seed);
-
-    let x0 = c000 + (c100 - c000) * fx;
-    let x1 = c010 + (c110 - c010) * fx;
-    let x2 = c001 + (c101 - c001) * fx;
-    let x3 = c011 + (c111 - c011) * fx;
-
-    let y0 = x0 + (x1 - x0) * fy;
-    let y1 = x2 + (x3 - x2) * fy;
-
-    y0 + (y1 - y0) * fz
-}
-
-/// Fractional Brownian motion — layer multiple octaves of noise
-fn fbm(x: f32, y: f32, z: f32, octaves: u32, seed: u32) -> f32 {
-    let mut value = 0.0;
-    let mut amplitude = 0.5;
-    let mut frequency = 1.0;
-    for _ in 0..octaves {
-        value += amplitude * value_noise(x * frequency, y * frequency, z * frequency, seed);
-        amplitude *= 0.5;
-        frequency *= 2.0;
-    }
-    value
-}
 
 // ============================================================================
 // Texture generation
@@ -259,35 +200,23 @@ pub struct Earth {
     shooting_stars: Vec<ShootingStar>,
     next_burst_timer: f32,
     next_shoot_timer: f32,
-    rng_state: u64,
+    rng: Rng,
 }
 
 impl Earth {
-    fn xorshift(state: &mut u64) -> u64 {
-        *state ^= *state << 13;
-        *state ^= *state >> 7;
-        *state ^= *state << 17;
-        *state
-    }
-
-    fn rng_f32(state: &mut u64) -> f32 {
-        Self::xorshift(state);
-        (*state % 10000) as f32 / 10000.0
-    }
-
     pub fn new() -> Self {
-        let mut rng = 9876543u64;
+        let mut rng = Rng::new(9876543);
 
         let mut stars = Vec::with_capacity(300);
         for _ in 0..300 {
             stars.push(Star {
-                x: Self::rng_f32(&mut rng),
-                y: Self::rng_f32(&mut rng),
-                base_bright: 60.0 + Self::rng_f32(&mut rng) * 195.0,
-                twinkle_speed: 1.5 + Self::rng_f32(&mut rng) * 6.0,
-                twinkle_depth: 0.3 + Self::rng_f32(&mut rng) * 0.7,
-                phase: Self::rng_f32(&mut rng) * TAU,
-                color_temp: (Self::xorshift(&mut rng) % 3) as u8,
+                x: rng.next_f32(),
+                y: rng.next_f32(),
+                base_bright: 60.0 + rng.next_f32() * 195.0,
+                twinkle_speed: 1.5 + rng.next_f32() * 6.0,
+                twinkle_depth: 0.3 + rng.next_f32() * 0.7,
+                phase: rng.next_f32() * TAU,
+                color_temp: (rng.next_u64() % 3) as u8,
             });
         }
 
@@ -309,7 +238,7 @@ impl Earth {
             shooting_stars: Vec::new(),
             next_burst_timer: 1.5,
             next_shoot_timer: 3.0,
-            rng_state: rng,
+            rng,
         }
     }
 }
@@ -374,7 +303,7 @@ impl Effect for Earth {
 
         // Polygon region collision (circle around globe center)
         for region in &scene.regions {
-            let verts = region.polygon.as_tuples();
+            let verts = region.polygon().as_tuples();
             if let Some((nx, ny, penetration)) =
                 circle_polygon_collision(self.pos_x, self.pos_y, visual_radius, &verts)
             {
@@ -396,18 +325,18 @@ impl Effect for Earth {
         self.next_burst_timer -= dt;
         if self.next_burst_timer <= 0.0 {
             // Pick a random star to burst
-            let idx = (Self::xorshift(&mut self.rng_state) % self.stars.len() as u64) as usize;
+            let idx = (self.rng.next_u64() % self.stars.len() as u64) as usize;
             let star = &self.stars[idx];
             self.starbursts.push(Starburst {
                 x: star.x,
                 y: star.y,
                 age: 0.0,
-                duration: 0.4 + Self::rng_f32(&mut self.rng_state) * 0.8,
-                peak_bright: 200.0 + Self::rng_f32(&mut self.rng_state) * 55.0,
-                spike_len: 8.0 + Self::rng_f32(&mut self.rng_state) * 20.0,
+                duration: 0.4 + self.rng.next_f32() * 0.8,
+                peak_bright: 200.0 + self.rng.next_f32() * 55.0,
+                spike_len: 8.0 + self.rng.next_f32() * 20.0,
             });
             // Next burst in 0.8-2.5 seconds
-            self.next_burst_timer = 0.8 + Self::rng_f32(&mut self.rng_state) * 1.7;
+            self.next_burst_timer = 0.8 + self.rng.next_f32() * 1.7;
         }
 
         // Tick starbursts, remove expired
@@ -422,23 +351,23 @@ impl Effect for Earth {
             let screen_w = width as f32;
             let screen_h = height as f32;
             // Start from a random edge-ish position in the upper half
-            let start_x = Self::rng_f32(&mut self.rng_state) * screen_w;
-            let start_y = Self::rng_f32(&mut self.rng_state) * screen_h * 0.4;
+            let start_x = self.rng.next_f32() * screen_w;
+            let start_y = self.rng.next_f32() * screen_h * 0.4;
             // Angle: mostly downward-diagonal
-            let angle = 0.3 + Self::rng_f32(&mut self.rng_state) * 0.8;
-            let speed = 300.0 + Self::rng_f32(&mut self.rng_state) * 400.0;
+            let angle = 0.3 + self.rng.next_f32() * 0.8;
+            let speed = 300.0 + self.rng.next_f32() * 400.0;
             self.shooting_stars.push(ShootingStar {
                 x: start_x,
                 y: start_y,
                 vx: angle.cos() * speed,
                 vy: angle.sin() * speed,
                 age: 0.0,
-                duration: 0.4 + Self::rng_f32(&mut self.rng_state) * 0.6,
-                trail_len: 30.0 + Self::rng_f32(&mut self.rng_state) * 60.0,
-                brightness: 180.0 + Self::rng_f32(&mut self.rng_state) * 75.0,
+                duration: 0.4 + self.rng.next_f32() * 0.6,
+                trail_len: 30.0 + self.rng.next_f32() * 60.0,
+                brightness: 180.0 + self.rng.next_f32() * 75.0,
             });
             // Next shooting star in 2-6 seconds
-            self.next_shoot_timer = 2.0 + Self::rng_f32(&mut self.rng_state) * 4.0;
+            self.next_shoot_timer = 2.0 + self.rng.next_f32() * 4.0;
         }
 
         // Tick shooting stars

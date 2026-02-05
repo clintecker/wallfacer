@@ -7,6 +7,7 @@ mod effects;
 mod geometry;
 mod input;
 mod math3d;
+mod noise;
 mod particles;
 mod regions;
 mod texture;
@@ -17,8 +18,8 @@ use display::{
 };
 use effects::{
     Bobs, CopperBars, DotTunnel, Dvd, Earth, Earth2, Effect, EtherealInk, Fire, Glenz, Julia,
-    LightningStorm, LivingWall, Mandelbrot, Pipes, Plasma, Raycaster, Ripples, Rotozoomer, Rubber,
-    ScrollerDemo, Snowfall, Starfield, TestPattern, TextFxDemo, Tunnel, VectorBalls, Vines, Worms,
+    Plasma, Raycaster, RegionFire, Ripples, Rotozoomer, Rubber, ScrollerDemo, Snowfall, Starfield,
+    TestPattern, TextFxDemo, Tunnel, VectorBalls, Worms,
 };
 use input::CalibrationMode;
 use regions::Scene;
@@ -33,26 +34,65 @@ enum AppMode {
 
 /// Mask all regions in the scene by filling them with the specified color
 fn mask_regions(buffer: &mut PixelBuffer, scene: &Scene, color: (u8, u8, u8)) {
+    use regions::Shape;
     for region in &scene.regions {
-        buffer.fill_polygon(&region.polygon.as_tuples(), color.0, color.1, color.2);
+        match region.get_shape() {
+            Shape::Polygon(poly) => {
+                buffer.fill_polygon(&poly.as_tuples(), color.0, color.1, color.2);
+            }
+            Shape::Circle(circle) => {
+                buffer.fill_circle(
+                    circle.center.x as i32,
+                    circle.center.y as i32,
+                    circle.radius as i32,
+                    color.0,
+                    color.1,
+                    color.2,
+                );
+            }
+        }
     }
 }
 
-/// Parse command line arguments and return (width, height, vsync)
-fn parse_args() -> (u32, u32, bool) {
+/// Display rotation for portrait/landscape modes
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Rotation {
+    None,      // 0°
+    Cw90,      // 90° clockwise (portrait)
+    Cw180,     // 180° (upside down)
+    Cw270,     // 270° clockwise / 90° counter-clockwise (portrait)
+}
+
+/// Parsed command line options
+struct AppOptions {
+    width: u32,
+    height: u32,
+    vsync: bool,
+    start_effect: Option<usize>,
+    rotation: Rotation,
+    benchmark_seconds: Option<f32>,
+}
+
+/// Parse command line arguments
+fn parse_args() -> AppOptions {
     let args: Vec<String> = std::env::args().collect();
-    let mut width = DEFAULT_WIDTH;
-    let mut height = DEFAULT_HEIGHT;
-    let mut vsync = true;
+    let mut opts = AppOptions {
+        width: DEFAULT_WIDTH,
+        height: DEFAULT_HEIGHT,
+        vsync: true,
+        start_effect: Some(0),
+        rotation: Rotation::None,
+        benchmark_seconds: None,
+    };
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "--no-vsync" => vsync = false,
+            "--no-vsync" => opts.vsync = false,
             "--width" | "-w" => {
                 if i + 1 < args.len() {
                     if let Ok(w) = args[i + 1].parse::<u32>() {
-                        width = w;
+                        opts.width = w;
                     }
                     i += 1;
                 }
@@ -60,7 +100,7 @@ fn parse_args() -> (u32, u32, bool) {
             "--height" | "-h" => {
                 if i + 1 < args.len() {
                     if let Ok(h) = args[i + 1].parse::<u32>() {
-                        height = h;
+                        opts.height = h;
                     }
                     i += 1;
                 }
@@ -71,12 +111,43 @@ fn parse_args() -> (u32, u32, bool) {
                     let parts: Vec<&str> = args[i + 1].split('x').collect();
                     if parts.len() == 2 {
                         if let (Ok(w), Ok(h)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
-                            width = w;
-                            height = h;
+                            opts.width = w;
+                            opts.height = h;
                         }
                     }
                     i += 1;
                 }
+            },
+            "--effect" | "-e" => {
+                if i + 1 < args.len() {
+                    if let Ok(e) = args[i + 1].parse::<usize>() {
+                        opts.start_effect = Some(e);
+                    }
+                    i += 1;
+                }
+            },
+            "--rotate" => {
+                if i + 1 < args.len() {
+                    opts.rotation = match args[i + 1].as_str() {
+                        "90" | "cw90" => Rotation::Cw90,
+                        "180" => Rotation::Cw180,
+                        "270" | "ccw90" | "cw270" => Rotation::Cw270,
+                        _ => Rotation::None,
+                    };
+                    i += 1;
+                }
+            },
+            "--benchmark" | "-b" => {
+                // Default to 10 seconds, or parse optional duration
+                let mut duration = 10.0;
+                if i + 1 < args.len() {
+                    if let Ok(secs) = args[i + 1].parse::<f32>() {
+                        duration = secs;
+                        i += 1;
+                    }
+                }
+                opts.benchmark_seconds = Some(duration);
+                opts.vsync = false; // Benchmark always runs without vsync
             },
             "--help" => {
                 println!("Usage: wallfacer [OPTIONS]");
@@ -91,6 +162,9 @@ fn parse_args() -> (u32, u32, bool) {
                     DEFAULT_HEIGHT
                 );
                 println!("  --resolution WxH, -r WxH  Set resolution (e.g., 1920x1080)");
+                println!("  --effect N, -e N      Start with effect number N (0-indexed)");
+                println!("  --rotate N            Rotate display (0, 90, 180, 270)");
+                println!("  --benchmark [S], -b   Run benchmark for S seconds (default: 10)");
                 println!("  --no-vsync            Disable VSync for uncapped framerate");
                 println!("  --help                Show this help message");
                 std::process::exit(0);
@@ -100,124 +174,184 @@ fn parse_args() -> (u32, u32, bool) {
         i += 1;
     }
 
-    (width, height, vsync)
+    opts
 }
 
 fn main() -> Result<(), String> {
-    let (width, height, vsync) = parse_args();
+    let opts = parse_args();
+    let width = opts.width;
+    let height = opts.height;
+    let vsync = opts.vsync;
+    let start_effect = opts.start_effect;
+    let rotation = opts.rotation;
+    let benchmark_seconds = opts.benchmark_seconds;
 
-    let (mut display, texture_creator) = Display::with_options("wallfacer", width, height, vsync)?;
-    let mut target = RenderTarget::with_size(&texture_creator, width, height)?;
+    // For 90/270 rotation, the window dimensions are swapped
+    let (window_w, window_h) = match rotation {
+        Rotation::Cw90 | Rotation::Cw270 => (height, width),
+        _ => (width, height),
+    };
+
+    let (mut display, texture_creator) =
+        Display::with_options("wallfacer", window_w, window_h, vsync)?;
+    let mut target = RenderTarget::with_size(&texture_creator, window_w, window_h)?;
+    // Effects render at original dimensions, then we rotate for display
     let mut buffer = PixelBuffer::with_size(width, height);
 
-    // FPS counter with 60 sample rolling average
-    let mut fps_counter = FpsCounter::new(60);
+    // FPS counter - use larger window for benchmarks to capture all frames
+    let sample_count = if benchmark_seconds.is_some() { 100_000 } else { 60 };
+    let mut fps_counter = FpsCounter::new(sample_count);
     let mut show_fps = false;
+    let mut total_elapsed = 0.0f32;
 
     // Load scene or create new
     let scene = Scene::load("scene.json").unwrap_or_else(|_| Scene::new("default"));
 
     // Available effects
     let mut effects: Vec<Box<dyn Effect>> = vec![
-        Box::new(Plasma::new()),         // 1
-        Box::new(Starfield::new()),      // 2
-        Box::new(Fire::new()),           // 3
-        Box::new(ScrollerDemo::new()),   // 4
-        Box::new(TextFxDemo::new()),     // 5
-        Box::new(Worms::new()),          // 6
-        Box::new(Dvd::new()),            // 7
-        Box::new(CopperBars::new()),     // 8
-        Box::new(Glenz::new()),          // 9
-        Box::new(Rotozoomer::new()),     // 0
-        Box::new(Tunnel::new()),         // -
-        Box::new(Bobs::new()),           // =
-        Box::new(Earth::new()),          // [
-        Box::new(Earth2::new()),         // ]
-        Box::new(Snowfall::new()),       // \
-        Box::new(EtherealInk::new()),    // ;
-        Box::new(VectorBalls::new()),    // '
-        Box::new(DotTunnel::new()),      // ,
-        Box::new(Rubber::new()),         // .
-        Box::new(Mandelbrot::new()),     // /
-        Box::new(Julia::new()),          // A
-        Box::new(Pipes::new()),          // P
-        Box::new(Raycaster::new()),      // R
-        Box::new(LightningStorm::new()), // Z
-        Box::new(Ripples::new()),        // X
-        Box::new(LivingWall::new()),     // C
-        Box::new(Vines::new()),          // V
+        Box::new(Plasma::new()),       // 1
+        Box::new(Starfield::new()),    // 2
+        Box::new(Fire::new()),         // 3
+        Box::new(ScrollerDemo::new()), // 4
+        Box::new(TextFxDemo::new()),   // 5
+        Box::new(Worms::new()),        // 6
+        Box::new(Dvd::new()),          // 7
+        Box::new(CopperBars::new()),   // 8
+        Box::new(Glenz::new()),        // 9
+        Box::new(Rotozoomer::new()),   // 0
+        Box::new(Tunnel::new()),       // -
+        Box::new(Bobs::new()),         // =
+        Box::new(Earth::new()),        // [
+        Box::new(Earth2::new()),       // ]
+        Box::new(Snowfall::new()),     // \
+        Box::new(EtherealInk::new()),  // ;
+        Box::new(VectorBalls::new()),  // '
+        Box::new(DotTunnel::new()),    // ,
+        Box::new(Rubber::new()),       // .
+        Box::new(Julia::new()),        // A
+        Box::new(Raycaster::new()),    // R
+        Box::new(Ripples::new()),      // X
+        Box::new(RegionFire::new()),   // Z
     ];
     // Test pattern shown for any unassigned slot
     let mut test_pattern = TestPattern::new();
     // None = test pattern, Some(idx) = effects[idx]
-    let mut current_effect: Option<usize> = Some(0);
+    // Clamp start_effect to valid range
+    let mut current_effect: Option<usize> = start_effect.map(|e: usize| e.min(effects.len() - 1));
 
     // Calibration mode
     let mut calibration = CalibrationMode::new(scene);
     let mut mode = AppMode::Effect;
 
-    println!("=== wallfacer ===");
-    println!("Resolution: {}x{}", width, height);
-    if vsync {
-        println!("VSync: ON (60fps locked). Use --no-vsync for uncapped.");
+    // Get effect name for benchmark output
+    let effect_name = match current_effect {
+        Some(idx) => effects[idx].name().to_string(),
+        None => "Test Pattern".to_string(),
+    };
+
+    if let Some(duration) = benchmark_seconds {
+        println!("=== wallfacer benchmark ===");
+        println!("Resolution: {}x{}", width, height);
+        println!("Effect: {} (index {})", effect_name, current_effect.unwrap_or(0));
+        println!("Duration: {} seconds", duration);
+        println!("Running...");
     } else {
-        println!("VSync: OFF (uncapped framerate)");
+        println!("=== wallfacer ===");
+        println!("Resolution: {}x{}", width, height);
+        if rotation != Rotation::None {
+            println!(
+                "Rotation: {:?} (window: {}x{})",
+                rotation, window_w, window_h
+            );
+        }
+        if vsync {
+            println!("VSync: ON (60fps locked). Use --no-vsync for uncapped.");
+        } else {
+            println!("VSync: OFF (uncapped framerate)");
+        }
+        println!();
+        println!("Available effects (use --effect N or arrow keys):");
+        for (i, effect) in effects.iter().enumerate() {
+            println!("  {:2} - {}", i, effect.name());
+        }
+        println!();
+        println!("Controls:");
+        println!("  Left/Right - Cycle through effects");
+        println!("  Tab        - Toggle calibration mode");
+        println!("  F          - Toggle FPS display");
+        println!("  S          - Save scene");
+        println!("  L          - Load scene");
+        println!("  Escape     - Quit");
+        println!();
+        println!("Calibration mode:");
+        println!("  Left click        - Select region / start drawing polygon");
+        println!("  Shift + drag      - Draw circle (drag to set radius)");
+        println!("  Click + drag      - Move vertices / resize circle");
+        println!("  Close polygon     - Click near first vertex");
+        println!("  Right click       - Cancel / deselect");
+        println!("  Delete            - Delete selected region");
     }
-    println!("Use --help for command line options.");
-    println!("Controls:");
-    println!("  Tab        - Toggle calibration mode");
-    println!("  Left/Right - Cycle through effects");
-    println!("  1          - Plasma");
-    println!("  2          - Starfield");
-    println!("  3          - Fire");
-    println!("  4          - Scroller Demo");
-    println!("  5          - Text FX Demo");
-    println!("  6          - Worms");
-    println!("  7          - DVD Bounce");
-    println!("  8          - Copper Bars");
-    println!("  9          - Glenz Vectors");
-    println!("  0          - Rotozoomer");
-    println!("  -          - Tunnel");
-    println!("  =          - Bobs");
-    println!("  [          - Earth");
-    println!("  ]          - Earth 2.0");
-    println!("  \\          - Snowfall");
-    println!("  ;          - Ethereal Ink");
-    println!("  '          - Vector Balls");
-    println!("  ,          - Dot Tunnel");
-    println!("  .          - Rubber Cube");
-    println!("  /          - Mandelbrot Zoom");
-    println!("  A          - Julia Morph");
-    println!("  P          - 3D Pipes");
-    println!("  R          - Raycaster Maze");
-    println!("  Z          - Lightning Storm");
-    println!("  X          - Shockwave Ripples");
-    println!("  C          - Living Wall");
-    println!("  V          - Bioluminescent Vines");
-    println!("  Backspace  - Test Pattern");
-    println!("  F          - Toggle FPS display");
-    println!("  S          - Save scene");
-    println!("  L          - Load scene");
-    println!("  Escape     - Quit");
-    println!();
-    println!("Calibration mode:");
-    println!("  Left click        - Select region / start drawing");
-    println!("  Click + drag      - Move vertices");
-    println!("  Click empty space - Start new polygon");
-    println!("  Close polygon     - Click near first vertex");
-    println!("  Right click       - Cancel / deselect");
-    println!("  Delete            - Delete selected region");
 
     'main: loop {
         // Delta time and FPS measurement
         let (dt, _current_fps, avg_fps) = fps_counter.tick();
+        total_elapsed += dt;
 
-        // Handle input
+        // Check benchmark completion
+        if let Some(duration) = benchmark_seconds {
+            if total_elapsed >= duration {
+                // Print benchmark results
+                let frame_count = fps_counter.frame_count();
+                let (min_fps, max_fps) = fps_counter.min_max_fps();
+                let avg_ms = fps_counter.avg_frame_time_ms();
+                let std_dev_ms = fps_counter.std_dev_ms();
+                let (p1_ms, p50_ms, p99_ms) = fps_counter.percentiles_ms();
+                let avg_fps_final = if avg_ms > 0.0 { 1000.0 / avg_ms } else { 0.0 };
+
+                println!();
+                println!("=== Benchmark Results ===");
+                println!();
+                println!("Configuration:");
+                println!("  Resolution:     {}x{}", width, height);
+                println!("  Effect:         {} (index {})", effect_name, current_effect.unwrap_or(0));
+                println!("  Duration:       {:.2}s (requested {}s)", total_elapsed, duration);
+                println!();
+                println!("Frame Statistics:");
+                println!("  Total frames:   {}", frame_count);
+                println!("  Average FPS:    {:.1}", avg_fps_final);
+                println!("  Min FPS:        {:.1}", min_fps);
+                println!("  Max FPS:        {:.1}", max_fps);
+                println!();
+                println!("Frame Time (ms):");
+                println!("  Average:        {:.2}", avg_ms);
+                println!("  Std deviation:  {:.2}", std_dev_ms);
+                println!("  1st percentile: {:.2} (fastest 1%)", p1_ms);
+                println!("  Median (p50):   {:.2}", p50_ms);
+                println!("  99th percentile:{:.2} (slowest 1%)", p99_ms);
+
+                break 'main;
+            }
+        }
+
+        // Handle input - minimal handling in benchmark mode
         for event in display.poll_events() {
-            // Handle global keys
+            // Always allow quit
+            if matches!(&event, InputEvent::Quit) {
+                break 'main;
+            }
+
             if let InputEvent::KeyDown(key) = &event {
+                // Escape always quits
+                if *key == Keycode::Escape {
+                    break 'main;
+                }
+
+                // Skip interactive controls during benchmark
+                if benchmark_seconds.is_some() {
+                    continue;
+                }
+
                 match *key {
-                    Keycode::Escape => break 'main,
                     Keycode::Tab => {
                         mode = if mode == AppMode::Effect {
                             AppMode::Calibration
@@ -248,126 +382,9 @@ fn main() -> Result<(), String> {
                         show_fps = !show_fps;
                         continue;
                     },
-                    Keycode::Delete => {
+                    Keycode::Delete | Keycode::Backspace => {
                         if mode == AppMode::Calibration {
                             calibration.delete_selected();
-                        }
-                        continue;
-                    },
-                    // Number keys: 1-5 select effects, 6-0 show test pattern
-                    Keycode::Num1 => {
-                        current_effect = Some(0);
-                        continue;
-                    },
-                    Keycode::Num2 => {
-                        current_effect = Some(1);
-                        continue;
-                    },
-                    Keycode::Num3 => {
-                        current_effect = Some(2);
-                        continue;
-                    },
-                    Keycode::Num4 => {
-                        current_effect = Some(3);
-                        continue;
-                    },
-                    Keycode::Num5 => {
-                        current_effect = Some(4);
-                        continue;
-                    },
-                    Keycode::Num6 => {
-                        current_effect = Some(5);
-                        continue;
-                    },
-                    Keycode::Num7 => {
-                        current_effect = Some(6);
-                        continue;
-                    },
-                    Keycode::Num8 => {
-                        current_effect = Some(7); // Copper Bars
-                        continue;
-                    },
-                    Keycode::Num9 => {
-                        current_effect = Some(8); // Glenz
-                        continue;
-                    },
-                    Keycode::Num0 => {
-                        current_effect = Some(9); // Rotozoomer
-                        continue;
-                    },
-                    Keycode::Minus => {
-                        current_effect = Some(10); // Tunnel
-                        continue;
-                    },
-                    Keycode::Equals => {
-                        current_effect = Some(11); // Bobs
-                        continue;
-                    },
-                    Keycode::LeftBracket => {
-                        current_effect = Some(12); // Earth
-                        continue;
-                    },
-                    Keycode::RightBracket => {
-                        current_effect = Some(13); // Earth 2.0
-                        continue;
-                    },
-                    Keycode::Backslash => {
-                        current_effect = Some(14); // Snowfall
-                        continue;
-                    },
-                    Keycode::Semicolon => {
-                        current_effect = Some(15); // Ethereal Ink
-                        continue;
-                    },
-                    Keycode::Quote => {
-                        current_effect = Some(16); // Vector Balls
-                        continue;
-                    },
-                    Keycode::Comma => {
-                        current_effect = Some(17); // Dot Tunnel
-                        continue;
-                    },
-                    Keycode::Period => {
-                        current_effect = Some(18); // Rubber Cube
-                        continue;
-                    },
-                    Keycode::Slash => {
-                        current_effect = Some(19); // Mandelbrot Zoom
-                        continue;
-                    },
-                    Keycode::A => {
-                        current_effect = Some(20); // Julia Morph
-                        continue;
-                    },
-                    Keycode::P => {
-                        current_effect = Some(21); // 3D Pipes
-                        continue;
-                    },
-                    Keycode::R => {
-                        current_effect = Some(22); // Raycaster Maze
-                        continue;
-                    },
-                    Keycode::Z => {
-                        current_effect = Some(23); // Lightning Storm
-                        continue;
-                    },
-                    Keycode::X => {
-                        current_effect = Some(24); // Shockwave Ripples
-                        continue;
-                    },
-                    Keycode::C => {
-                        current_effect = Some(25); // Living Wall
-                        continue;
-                    },
-                    Keycode::V => {
-                        current_effect = Some(26); // Vines
-                        continue;
-                    },
-                    Keycode::Backspace => {
-                        if mode == AppMode::Calibration {
-                            calibration.delete_selected();
-                        } else {
-                            current_effect = None; // Test pattern
                         }
                         continue;
                     },
@@ -391,12 +408,8 @@ fn main() -> Result<(), String> {
                 }
             }
 
-            if matches!(&event, InputEvent::Quit) {
-                break 'main;
-            }
-
             // Pass all events to calibration mode (mouse move, down, up)
-            if mode == AppMode::Calibration {
+            if mode == AppMode::Calibration && benchmark_seconds.is_none() {
                 calibration.handle_event(&event);
             }
         }
@@ -449,8 +462,24 @@ fn main() -> Result<(), String> {
             draw_text(&mut buffer, 4, y, &fps_text, 255, 255, 0);
         }
 
-        // Present
-        display.present(&mut target, &buffer)?;
+        // Apply rotation and present
+        match rotation {
+            Rotation::None => {
+                display.present(&mut target, &buffer)?;
+            }
+            Rotation::Cw90 => {
+                let rotated = buffer.rotated_90();
+                display.present(&mut target, &rotated)?;
+            }
+            Rotation::Cw180 => {
+                let rotated = buffer.rotated_180();
+                display.present(&mut target, &rotated)?;
+            }
+            Rotation::Cw270 => {
+                let rotated = buffer.rotated_270();
+                display.present(&mut target, &rotated)?;
+            }
+        }
     }
 
     Ok(())

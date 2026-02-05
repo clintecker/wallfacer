@@ -3,8 +3,9 @@ use crate::display::PixelBuffer;
 use crate::regions::Scene;
 use crate::util::{hsv_to_rgb, Rng};
 
-const NUM_STARS: usize = 300;
+const NUM_STARS: usize = 400;
 const MAX_TRAIL_LEN: f32 = 40.0;
+const MIN_BRIGHTNESS: f32 = 80.0; // Minimum brightness for low-light visibility
 
 struct Star {
     x: f32,
@@ -87,10 +88,12 @@ impl Effect for Starfield {
             let sx = (star.x / star.z) * fov + self.center_x;
             let sy = (star.y / star.z) * fov + self.center_y;
 
-            // Brightness based on distance
-            let brightness = ((1.0 - star.z / 600.0) * 255.0).clamp(0.0, 255.0) as u8;
+            // Brightness based on distance - boosted minimum for low-light visibility
+            let base_brightness = (1.0 - star.z / 600.0) * (255.0 - MIN_BRIGHTNESS) + MIN_BRIGHTNESS;
+            let brightness = base_brightness.clamp(MIN_BRIGHTNESS, 255.0) as u8;
 
-            let (r, g, b) = hsv_to_rgb(star.hue, 1.0, brightness as f32 / 255.0);
+            // Less saturated colors (more white) for better visibility
+            let (r, g, b) = hsv_to_rgb(star.hue, 0.5, brightness as f32 / 255.0);
             let trail_len = ((1.0 - (star.z / 600.0).clamp(0.0, 1.0)) * max_trail).ceil() as i32;
 
             if trail_len > 0 {
