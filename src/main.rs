@@ -18,9 +18,10 @@ use display::{
     draw_text, Display, InputEvent, PixelBuffer, RenderTarget, DEFAULT_HEIGHT, DEFAULT_WIDTH,
 };
 use effects::{
-    Bobs, CopperBars, DotTunnel, Dvd, Earth, Earth2, Effect, EtherealInk, Fire, Glenz, Julia,
-    Plasma, Raycaster, RegionFire, Ripples, Rotozoomer, Rubber, ScrollerDemo, Snowfall, Starfield,
-    TestPattern, TextFxDemo, Tunnel, VectorBalls, Worms,
+    Bobs, CopperBars, DotTunnel, Dvd, Earth, Earth2, Effect, EtherealInk, Fire, Glenz,
+    GravityBalls, Julia, LavaRegions, Metaballs, Plasma, Raycaster, RegionFire, Ripples,
+    Rotozoomer, Rubber, ScrollerDemo, Snowfall, Starfield, TestPattern, TextFxDemo, Tunnel,
+    VectorBalls, Vortex, Worms,
 };
 use control::{Command, Controller};
 use input::CalibrationMode;
@@ -352,6 +353,10 @@ fn main() -> Result<(), String> {
         Box::new(Raycaster::new()),    // R
         Box::new(Ripples::new()),      // X
         Box::new(RegionFire::new()),   // Z
+        Box::new(Metaballs::new()),    // Metaballs
+        Box::new(GravityBalls::new()), // Gravity Balls
+        Box::new(LavaRegions::new()),  // Lava Regions
+        Box::new(Vortex::new()),       // Vortex
     ];
     // Test pattern shown for any unassigned slot
     let mut test_pattern = TestPattern::new();
