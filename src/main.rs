@@ -16,8 +16,9 @@ use display::{
     draw_text, Display, InputEvent, PixelBuffer, RenderTarget, DEFAULT_HEIGHT, DEFAULT_WIDTH,
 };
 use effects::{
-    Bobs, CopperBars, Dvd, Earth, Earth2, Effect, Fire, Glenz, Plasma, Rotozoomer, ScrollerDemo,
-    Starfield, TestPattern, TextFxDemo, Tunnel, Worms,
+    Bobs, CopperBars, DotTunnel, Dvd, Earth, Earth2, Effect, EtherealInk, Fire, Glenz, Julia,
+    LightningStorm, LivingWall, Mandelbrot, Pipes, Plasma, Raycaster, Ripples, Rotozoomer, Rubber,
+    ScrollerDemo, Snowfall, Starfield, TestPattern, TextFxDemo, Tunnel, VectorBalls, Vines, Worms,
 };
 use input::CalibrationMode;
 use regions::Scene;
@@ -118,20 +119,33 @@ fn main() -> Result<(), String> {
 
     // Available effects
     let mut effects: Vec<Box<dyn Effect>> = vec![
-        Box::new(Plasma::new()),       // 1
-        Box::new(Starfield::new()),    // 2
-        Box::new(Fire::new()),         // 3
-        Box::new(ScrollerDemo::new()), // 4
-        Box::new(TextFxDemo::new()),   // 5
-        Box::new(Worms::new()),        // 6
-        Box::new(Dvd::new()),          // 7
-        Box::new(CopperBars::new()),   // 8
-        Box::new(Glenz::new()),        // 9
-        Box::new(Rotozoomer::new()),   // 0
-        Box::new(Tunnel::new()),       // -
-        Box::new(Bobs::new()),         // =
-        Box::new(Earth::new()),        // [
-        Box::new(Earth2::new()),       // ]
+        Box::new(Plasma::new()),         // 1
+        Box::new(Starfield::new()),      // 2
+        Box::new(Fire::new()),           // 3
+        Box::new(ScrollerDemo::new()),   // 4
+        Box::new(TextFxDemo::new()),     // 5
+        Box::new(Worms::new()),          // 6
+        Box::new(Dvd::new()),            // 7
+        Box::new(CopperBars::new()),     // 8
+        Box::new(Glenz::new()),          // 9
+        Box::new(Rotozoomer::new()),     // 0
+        Box::new(Tunnel::new()),         // -
+        Box::new(Bobs::new()),           // =
+        Box::new(Earth::new()),          // [
+        Box::new(Earth2::new()),         // ]
+        Box::new(Snowfall::new()),       // \
+        Box::new(EtherealInk::new()),    // ;
+        Box::new(VectorBalls::new()),    // '
+        Box::new(DotTunnel::new()),      // ,
+        Box::new(Rubber::new()),         // .
+        Box::new(Mandelbrot::new()),     // /
+        Box::new(Julia::new()),          // A
+        Box::new(Pipes::new()),          // P
+        Box::new(Raycaster::new()),      // R
+        Box::new(LightningStorm::new()), // Z
+        Box::new(Ripples::new()),        // X
+        Box::new(LivingWall::new()),     // C
+        Box::new(Vines::new()),          // V
     ];
     // Test pattern shown for any unassigned slot
     let mut test_pattern = TestPattern::new();
@@ -167,6 +181,19 @@ fn main() -> Result<(), String> {
     println!("  =          - Bobs");
     println!("  [          - Earth");
     println!("  ]          - Earth 2.0");
+    println!("  \\          - Snowfall");
+    println!("  ;          - Ethereal Ink");
+    println!("  '          - Vector Balls");
+    println!("  ,          - Dot Tunnel");
+    println!("  .          - Rubber Cube");
+    println!("  /          - Mandelbrot Zoom");
+    println!("  A          - Julia Morph");
+    println!("  P          - 3D Pipes");
+    println!("  R          - Raycaster Maze");
+    println!("  Z          - Lightning Storm");
+    println!("  X          - Shockwave Ripples");
+    println!("  C          - Living Wall");
+    println!("  V          - Bioluminescent Vines");
     println!("  Backspace  - Test Pattern");
     println!("  F          - Toggle FPS display");
     println!("  S          - Save scene");
@@ -282,6 +309,58 @@ fn main() -> Result<(), String> {
                     },
                     Keycode::RightBracket => {
                         current_effect = Some(13); // Earth 2.0
+                        continue;
+                    },
+                    Keycode::Backslash => {
+                        current_effect = Some(14); // Snowfall
+                        continue;
+                    },
+                    Keycode::Semicolon => {
+                        current_effect = Some(15); // Ethereal Ink
+                        continue;
+                    },
+                    Keycode::Quote => {
+                        current_effect = Some(16); // Vector Balls
+                        continue;
+                    },
+                    Keycode::Comma => {
+                        current_effect = Some(17); // Dot Tunnel
+                        continue;
+                    },
+                    Keycode::Period => {
+                        current_effect = Some(18); // Rubber Cube
+                        continue;
+                    },
+                    Keycode::Slash => {
+                        current_effect = Some(19); // Mandelbrot Zoom
+                        continue;
+                    },
+                    Keycode::A => {
+                        current_effect = Some(20); // Julia Morph
+                        continue;
+                    },
+                    Keycode::P => {
+                        current_effect = Some(21); // 3D Pipes
+                        continue;
+                    },
+                    Keycode::R => {
+                        current_effect = Some(22); // Raycaster Maze
+                        continue;
+                    },
+                    Keycode::Z => {
+                        current_effect = Some(23); // Lightning Storm
+                        continue;
+                    },
+                    Keycode::X => {
+                        current_effect = Some(24); // Shockwave Ripples
+                        continue;
+                    },
+                    Keycode::C => {
+                        current_effect = Some(25); // Living Wall
+                        continue;
+                    },
+                    Keycode::V => {
+                        current_effect = Some(26); // Vines
                         continue;
                     },
                     Keycode::Backspace => {
