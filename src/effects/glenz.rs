@@ -56,7 +56,8 @@ impl Effect for Glenz {
         let height = buffer.height() as f32;
         let cx = width / 2.0;
         let cy = height / 2.0;
-        let fov = 400.0;
+        let scale = height.min(width) / 480.0;
+        let fov = 400.0 * scale;
         let camera_z = 350.0;
 
         // Clear to black

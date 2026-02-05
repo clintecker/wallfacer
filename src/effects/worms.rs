@@ -11,7 +11,7 @@ use crate::util::{hsv_to_rgb, Rng};
 
 const MAX_WORMS: usize = 24;
 const MAX_SEGMENTS: usize = 800;
-const SEGMENT_SIZE: u32 = 4;
+const BASE_SEGMENT_SIZE: f32 = 4.0;
 
 /// A single worm with head, body segments, and lifecycle
 struct Worm {
@@ -68,7 +68,15 @@ impl Worm {
         }
     }
 
-    fn update(&mut self, dt: f32, width: u32, height: u32, scene: &Scene, rng: &mut Rng) {
+    fn update(
+        &mut self,
+        dt: f32,
+        width: u32,
+        height: u32,
+        scene: &Scene,
+        rng: &mut Rng,
+        scale: f32,
+    ) {
         if !self.alive {
             // Dead worm - rapidly shrink segments until gone
             for _ in 0..3 {
@@ -98,13 +106,14 @@ impl Worm {
         // Apply turning with some damping
         self.direction += self.turn_speed * dt;
 
-        // Move head
-        let mut new_x = self.head_x + self.direction.cos() * self.speed * dt;
-        let mut new_y = self.head_y + self.direction.sin() * self.speed * dt;
+        // Move head (scale speed proportionally to viewport)
+        let seg_size = BASE_SEGMENT_SIZE * scale;
+        let mut new_x = self.head_x + self.direction.cos() * self.speed * dt * scale;
+        let mut new_y = self.head_y + self.direction.sin() * self.speed * dt * scale;
         let mut bounced = false;
 
         // Bounce off walls
-        let margin = SEGMENT_SIZE as f32;
+        let margin = seg_size;
         let w = width as f32 - margin;
         let h = height as f32 - margin;
 
@@ -129,7 +138,7 @@ impl Worm {
         }
 
         // Bounce off polygon regions - treat worm head as a small bounding box
-        let head_size = SEGMENT_SIZE as f32 + 1.0;
+        let head_size = seg_size + 1.0;
         let half_size = head_size / 2.0;
         for region in &scene.regions {
             let verts = region.polygon.as_tuples();
@@ -169,7 +178,7 @@ impl Worm {
 
         // Accumulate distance and add segments when threshold reached
         // This makes tail length frame-rate independent
-        let segment_spacing = SEGMENT_SIZE as f32 * 0.5;
+        let segment_spacing = seg_size * 0.5;
         self.distance_accum += dist_moved;
 
         while self.distance_accum >= segment_spacing {
@@ -204,7 +213,7 @@ impl Worm {
         }
     }
 
-    fn render(&self, buffer: &mut PixelBuffer) {
+    fn render(&self, buffer: &mut PixelBuffer, seg_size: u32) {
         if !self.alive && self.segments.is_empty() {
             return;
         }
@@ -237,9 +246,9 @@ impl Worm {
 
             // Draw segment as a filled circle
             let size = if i == 0 {
-                SEGMENT_SIZE + 1 // Head is slightly larger
+                seg_size + 1 // Head is slightly larger
             } else {
-                SEGMENT_SIZE - (i * SEGMENT_SIZE as usize / segment_count / 2) as u32
+                seg_size - (i * seg_size as usize / segment_count / 2) as u32
             };
             let size = size.max(2);
 
@@ -257,6 +266,7 @@ pub struct Worms {
     // Cache screen dimensions for spawning
     screen_width: u32,
     screen_height: u32,
+    screen_scale: f32,
     // Defer initial spawn until we know screen dimensions
     needs_initial_spawn: bool,
 }
@@ -270,6 +280,7 @@ impl Worms {
             time: 0.0,
             screen_width: 640,
             screen_height: 480,
+            screen_scale: 1.0,
             needs_initial_spawn: true,
         }
     }
@@ -306,6 +317,7 @@ impl Effect for Worms {
         self.time += dt;
         self.screen_width = width;
         self.screen_height = height;
+        self.screen_scale = width.min(height) as f32 / 480.0;
 
         // Spawn initial worms distributed across the screen
         if self.needs_initial_spawn {
@@ -321,8 +333,9 @@ impl Effect for Worms {
         }
 
         // Update all worms
+        let scale = self.screen_scale;
         for worm in &mut self.worms {
-            worm.update(dt, width, height, scene, &mut self.rng);
+            worm.update(dt, width, height, scene, &mut self.rng, scale);
         }
 
         // Count how many worms died this frame
@@ -348,8 +361,9 @@ impl Effect for Worms {
         buffer.clear(5, 5, 15);
 
         // Render all worms (back to front for proper layering)
+        let seg_size = (BASE_SEGMENT_SIZE * self.screen_scale).round().max(2.0) as u32;
         for worm in &self.worms {
-            worm.render(buffer);
+            worm.render(buffer, seg_size);
         }
     }
 

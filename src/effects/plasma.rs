@@ -46,10 +46,14 @@ impl Effect for Plasma {
         let height = buffer.height();
         let t = self.time;
 
+        // Normalize coordinates so wave density is resolution-independent
+        let sx = 640.0 / width as f32;
+        let sy = 480.0 / height as f32;
+
         for y in 0..height {
             for x in 0..width {
-                let fx = x as f32;
-                let fy = y as f32;
+                let fx = x as f32 * sx;
+                let fy = y as f32 * sy;
 
                 // Classic plasma formula - sum of sines at different frequencies
                 let v1 = self.fast_sin(fx * 0.02 + t);

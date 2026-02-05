@@ -12,8 +12,8 @@ use std::f32::consts::TAU;
 /// Number of bobs in the effect
 const NUM_BOBS: usize = 16;
 
-/// Bob radius in pixels
-const BOB_RADIUS: i32 = 20;
+/// Base bob radius in pixels (designed for 480p)
+const BASE_BOB_RADIUS: f32 = 20.0;
 
 /// A single bouncing bob
 struct Bob {
@@ -45,6 +45,7 @@ pub struct Bobs {
     trail_buffer: Vec<u8>, // Separate buffer for trail fade
     trail_w: u32,
     trail_h: u32,
+    screen_scale: f32, // min(w,h) / 480.0
 }
 
 impl Bobs {
@@ -71,6 +72,7 @@ impl Bobs {
             trail_buffer: Vec::new(),
             trail_w: 0,
             trail_h: 0,
+            screen_scale: 1.0,
         }
     }
 
@@ -94,18 +96,18 @@ impl Bobs {
     }
 
     /// Draw a bob to the trail buffer
-    fn draw_bob_to_trail(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8) {
+    fn draw_bob_to_trail(&mut self, x: i32, y: i32, r: u8, g: u8, b: u8, radius: i32) {
         let w = self.trail_w as i32;
         let h = self.trail_h as i32;
 
         // Draw filled circle with gradient
-        for dy in -BOB_RADIUS..=BOB_RADIUS {
+        for dy in -radius..=radius {
             let py = y + dy;
             if py < 0 || py >= h {
                 continue;
             }
 
-            let row_width = ((BOB_RADIUS * BOB_RADIUS - dy * dy) as f32).sqrt() as i32;
+            let row_width = ((radius * radius - dy * dy) as f32).sqrt() as i32;
 
             for dx in -row_width..=row_width {
                 let px = x + dx;
@@ -115,7 +117,7 @@ impl Bobs {
 
                 // Distance from center for gradient
                 let dist = ((dx * dx + dy * dy) as f32).sqrt();
-                let intensity = 1.0 - (dist / BOB_RADIUS as f32);
+                let intensity = 1.0 - (dist / radius as f32);
                 let intensity = intensity * intensity; // Quadratic falloff
 
                 let idx = ((py as u32 * self.trail_w + px as u32) * 4) as usize;
@@ -147,15 +149,19 @@ impl Effect for Bobs {
     fn update(&mut self, dt: f32, width: u32, height: u32, _scene: &Scene) {
         self.time += dt;
         self.ensure_trail_buffer(width, height);
+        self.screen_scale = width.min(height) as f32 / 480.0;
 
         let w = width as f32;
         let h = height as f32;
-        let margin = BOB_RADIUS as f32;
+        let bob_radius = (BASE_BOB_RADIUS * self.screen_scale).round() as i32;
+        let margin = bob_radius as f32;
 
-        // Update bob positions with bouncing
+        // Update bob positions with bouncing (scale speed proportionally)
+        let sx = width as f32 / 640.0;
+        let sy = height as f32 / 480.0;
         for bob in &mut self.bobs {
-            bob.x += bob.vx * dt;
-            bob.y += bob.vy * dt;
+            bob.x += bob.vx * dt * sx;
+            bob.y += bob.vy * dt * sy;
 
             // Bounce off edges
             if bob.x < margin {
@@ -200,8 +206,9 @@ impl Effect for Bobs {
             .collect();
 
         // Draw bobs to trail buffer
+        let bob_radius = (BASE_BOB_RADIUS * self.screen_scale).round() as i32;
         for (x, y, r, g, b) in draw_data {
-            self.draw_bob_to_trail(x, y, r, g, b);
+            self.draw_bob_to_trail(x, y, r, g, b, bob_radius);
         }
     }
 

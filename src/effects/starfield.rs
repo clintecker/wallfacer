@@ -77,17 +77,21 @@ impl Effect for Starfield {
     fn render(&self, buffer: &mut PixelBuffer) {
         buffer.clear(0, 0, 0);
 
+        // Scale projection and trails proportionally to viewport
+        let vp_scale = buffer.width().min(buffer.height()) as f32 / 480.0;
+        let fov = 256.0 * vp_scale;
+        let max_trail = MAX_TRAIL_LEN * vp_scale;
+
         for star in &self.stars {
             // 3D projection
-            let sx = (star.x / star.z) * 256.0 + self.center_x;
-            let sy = (star.y / star.z) * 256.0 + self.center_y;
+            let sx = (star.x / star.z) * fov + self.center_x;
+            let sy = (star.y / star.z) * fov + self.center_y;
 
             // Brightness based on distance
             let brightness = ((1.0 - star.z / 600.0) * 255.0).clamp(0.0, 255.0) as u8;
 
             let (r, g, b) = hsv_to_rgb(star.hue, 1.0, brightness as f32 / 255.0);
-            let trail_len =
-                ((1.0 - (star.z / 600.0).clamp(0.0, 1.0)) * MAX_TRAIL_LEN).ceil() as i32;
+            let trail_len = ((1.0 - (star.z / 600.0).clamp(0.0, 1.0)) * max_trail).ceil() as i32;
 
             if trail_len > 0 {
                 let dx = (sx - self.center_x) / star.z;

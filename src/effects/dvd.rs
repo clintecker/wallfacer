@@ -10,7 +10,7 @@ use crate::regions::Scene;
 use crate::util::hsv_to_rgb;
 
 const LOGO_TEXT: &str = "DVD";
-const LOGO_SCALE: u32 = 4;
+const BASE_LOGO_SCALE: u32 = 4;
 
 /// The DVD bounce effect
 pub struct Dvd {
@@ -21,22 +21,25 @@ pub struct Dvd {
     hue: f32,
     logo_width: u32,
     logo_height: u32,
+    logo_scale: u32,
     trail: Vec<(f32, f32, f32)>, // (x, y, hue) for trail effect
 }
 
 impl Dvd {
     pub fn new() -> Self {
-        let logo_width = text_width_scaled(LOGO_TEXT, LOGO_SCALE);
-        let logo_height = GLYPH_HEIGHT * LOGO_SCALE;
+        let logo_scale = BASE_LOGO_SCALE;
+        let logo_width = text_width_scaled(LOGO_TEXT, logo_scale);
+        let logo_height = GLYPH_HEIGHT * logo_scale;
 
         Self {
             x: 100.0,
             y: 100.0,
-            vx: 120.0, // pixels per second
+            vx: 120.0, // pixels per second (base speed at 640x480)
             vy: 80.0,
             hue: 0.0,
             logo_width,
             logo_height,
+            logo_scale,
             trail: Vec::with_capacity(20),
         }
     }
@@ -75,6 +78,16 @@ impl Default for Dvd {
 
 impl Effect for Dvd {
     fn update(&mut self, dt: f32, width: u32, height: u32, scene: &Scene) {
+        // Recompute logo scale for current screen size
+        let new_scale = (BASE_LOGO_SCALE as f32 * width.min(height) as f32 / 480.0)
+            .round()
+            .max(1.0) as u32;
+        if new_scale != self.logo_scale {
+            self.logo_scale = new_scale;
+            self.logo_width = text_width_scaled(LOGO_TEXT, new_scale);
+            self.logo_height = GLYPH_HEIGHT * new_scale;
+        }
+
         // Store trail position - only when moved enough distance (frame-rate independent)
         let min_dist = 8.0;
         let should_add = if let Some(&(lx, ly, _)) = self.trail.last() {
@@ -90,9 +103,11 @@ impl Effect for Dvd {
             self.trail.push((self.x, self.y, self.hue));
         }
 
-        // Move
-        let new_x = self.x + self.vx * dt;
-        let new_y = self.y + self.vy * dt;
+        // Move (scale speed proportionally to viewport)
+        let sx = width as f32 / 640.0;
+        let sy = height as f32 / 480.0;
+        let new_x = self.x + self.vx * dt * sx;
+        let new_y = self.y + self.vy * dt * sy;
 
         let mut bounced = false;
 
@@ -151,7 +166,16 @@ impl Effect for Dvd {
         for (i, &(tx, ty, thue)) in self.trail.iter().enumerate() {
             let alpha = (i as f32 / self.trail.len() as f32) * 0.3;
             let (r, g, b) = hsv_to_rgb(thue, 0.9, alpha);
-            draw_text_scaled(buffer, tx as i32, ty as i32, LOGO_TEXT, r, g, b, LOGO_SCALE);
+            draw_text_scaled(
+                buffer,
+                tx as i32,
+                ty as i32,
+                LOGO_TEXT,
+                r,
+                g,
+                b,
+                self.logo_scale,
+            );
         }
 
         // Draw main logo
@@ -167,7 +191,7 @@ impl Effect for Dvd {
             gr,
             gg,
             gb,
-            LOGO_SCALE,
+            self.logo_scale,
         );
         draw_text_scaled(
             buffer,
@@ -177,7 +201,7 @@ impl Effect for Dvd {
             gr,
             gg,
             gb,
-            LOGO_SCALE,
+            self.logo_scale,
         );
         draw_text_scaled(
             buffer,
@@ -187,7 +211,7 @@ impl Effect for Dvd {
             gr,
             gg,
             gb,
-            LOGO_SCALE,
+            self.logo_scale,
         );
         draw_text_scaled(
             buffer,
@@ -197,7 +221,7 @@ impl Effect for Dvd {
             gr,
             gg,
             gb,
-            LOGO_SCALE,
+            self.logo_scale,
         );
 
         // Redraw main on top for crisp edges
@@ -209,7 +233,7 @@ impl Effect for Dvd {
             r,
             g,
             b,
-            LOGO_SCALE,
+            self.logo_scale,
         );
     }
 

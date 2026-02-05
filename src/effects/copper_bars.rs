@@ -12,8 +12,8 @@ use std::f32::consts::TAU;
 /// Number of bars in the effect
 const NUM_BARS: usize = 8;
 
-/// Height of each bar in pixels
-const BAR_HEIGHT: i32 = 40;
+/// Base height of each bar in pixels (designed for 480p)
+const BASE_BAR_HEIGHT: f32 = 40.0;
 
 /// A single animated copper bar
 struct Bar {
@@ -47,9 +47,16 @@ impl CopperBars {
     }
 
     /// Draw a single bar with gradient shading
-    fn draw_bar(&self, buffer: &mut PixelBuffer, y_center: i32, hue: f32, alpha: u8) {
+    fn draw_bar(
+        &self,
+        buffer: &mut PixelBuffer,
+        y_center: i32,
+        hue: f32,
+        alpha: u8,
+        bar_height: i32,
+    ) {
         let width = buffer.width() as i32;
-        let half_height = BAR_HEIGHT / 2;
+        let half_height = bar_height / 2;
 
         for dy in -half_height..=half_height {
             let y = y_center + dy;
@@ -87,6 +94,7 @@ impl Effect for CopperBars {
 
     fn render(&self, buffer: &mut PixelBuffer) {
         let height = buffer.height() as f32;
+        let bar_height = (BASE_BAR_HEIGHT * height / 480.0).round().max(4.0) as i32;
 
         // Clear to dark background
         buffer.clear(16, 8, 32);
@@ -100,7 +108,7 @@ impl Effect for CopperBars {
             // Animate hue over time
             let hue = (bar.hue + self.time * 30.0) % 360.0;
 
-            self.draw_bar(buffer, y_center, hue, 180);
+            self.draw_bar(buffer, y_center, hue, 180, bar_height);
         }
     }
 
