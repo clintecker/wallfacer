@@ -7,10 +7,10 @@ use std::f32::consts::{PI, TAU};
 
 use super::Effect;
 use crate::display::PixelBuffer;
-use crate::geometry::{circle_polygon_collision, reflect};
+use crate::geometry::{circle_circle_collision, circle_polygon_collision, reflect};
 use crate::math3d::{project, Mesh, Vec3};
 use crate::noise::fbm;
-use crate::regions::Scene;
+use crate::regions::{Scene, Shape};
 use crate::texture::Texture;
 use crate::util::Rng;
 
@@ -301,12 +301,25 @@ impl Effect for Earth {
             self.pos_y = new_y;
         }
 
-        // Polygon region collision (circle around globe center)
+        // Region collision (circle around globe center)
         for region in &scene.regions {
-            let verts = region.polygon().as_tuples();
-            if let Some((nx, ny, penetration)) =
-                circle_polygon_collision(self.pos_x, self.pos_y, visual_radius, &verts)
-            {
+            let collision = match region.get_shape() {
+                Shape::Polygon(p) => {
+                    let verts = p.as_tuples();
+                    circle_polygon_collision(self.pos_x, self.pos_y, visual_radius, &verts)
+                }
+                Shape::Circle(c) => {
+                    circle_circle_collision(
+                        self.pos_x,
+                        self.pos_y,
+                        visual_radius,
+                        c.center.x,
+                        c.center.y,
+                        c.radius,
+                    )
+                }
+            };
+            if let Some((nx, ny, penetration)) = collision {
                 // Only reflect if moving INTO the region (prevents oscillation)
                 let dot = self.vel_x * nx + self.vel_y * ny;
                 if dot < 0.0 {

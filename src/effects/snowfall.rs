@@ -75,9 +75,12 @@ impl Snowfall {
     fn scene_fingerprint(scene: &Scene) -> u64 {
         let mut h: u64 = scene.regions.len() as u64;
         for region in &scene.regions {
-            for v in &region.polygon().vertices {
-                h = h.wrapping_mul(31).wrapping_add(v.x.to_bits() as u64);
-                h = h.wrapping_mul(31).wrapping_add(v.y.to_bits() as u64);
+            // Use bounds for fingerprinting - works for both polygons and circles
+            if let Some((min_x, min_y, max_x, max_y)) = region.get_shape().bounds() {
+                h = h.wrapping_mul(31).wrapping_add(min_x.to_bits() as u64);
+                h = h.wrapping_mul(31).wrapping_add(min_y.to_bits() as u64);
+                h = h.wrapping_mul(31).wrapping_add(max_x.to_bits() as u64);
+                h = h.wrapping_mul(31).wrapping_add(max_y.to_bits() as u64);
             }
         }
         h
@@ -94,7 +97,8 @@ impl Snowfall {
 
         // For each region, scan columns to find top and bottom of region surface
         for region in &scene.regions {
-            if let Some((min_x, min_y, max_x, max_y)) = region.polygon().bounds() {
+            let shape = region.get_shape();
+            if let Some((min_x, min_y, max_x, max_y)) = shape.bounds() {
                 let x0 = (min_x as i32).max(0) as usize;
                 let x1 = ((max_x as i32) + 1).min(width as i32) as usize;
                 let y_start = (min_y as i32).max(0);
@@ -106,7 +110,7 @@ impl Snowfall {
                     let mut found = false;
 
                     for row in y_start..y_end {
-                        if region.polygon().contains(col as f32 + 0.5, row as f32 + 0.5) {
+                        if shape.contains(col as f32 + 0.5, row as f32 + 0.5) {
                             if !found {
                                 this_top = row;
                                 found = true;

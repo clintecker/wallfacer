@@ -65,6 +65,26 @@ pub enum Rotation {
     Cw270,     // 270° clockwise / 90° counter-clockwise (portrait)
 }
 
+/// Transform window coordinates to content coordinates based on rotation
+fn transform_mouse(wx: i32, wy: i32, rotation: Rotation, content_w: u32, content_h: u32) -> (i32, i32) {
+    match rotation {
+        Rotation::None => (wx, wy),
+        Rotation::Cw90 => {
+            // Window is (content_h x content_w), content is (content_w x content_h)
+            // rotated_90: (x,y) -> (h-1-y, x), so inverse: (rx,ry) -> (ry, h-1-rx)
+            (wy, content_h as i32 - 1 - wx)
+        }
+        Rotation::Cw180 => {
+            // Inverse: (rx,ry) -> (w-1-rx, h-1-ry)
+            (content_w as i32 - 1 - wx, content_h as i32 - 1 - wy)
+        }
+        Rotation::Cw270 => {
+            // rotated_270: (x,y) -> (y, w-1-x), so inverse: (rx,ry) -> (w-1-ry, rx)
+            (content_w as i32 - 1 - wy, wx)
+        }
+    }
+}
+
 /// Parsed command line options
 struct AppOptions {
     width: u32,
@@ -448,8 +468,24 @@ fn main() -> Result<(), String> {
             }
 
             // Pass all events to calibration mode (mouse move, down, up)
+            // Transform mouse coordinates if display is rotated
             if mode == AppMode::Calibration && benchmark_seconds.is_none() {
-                calibration.handle_event(&event);
+                let transformed_event = match &event {
+                    InputEvent::MouseMove { x, y } => {
+                        let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
+                        InputEvent::MouseMove { x: tx, y: ty }
+                    }
+                    InputEvent::MouseDown { x, y, button } => {
+                        let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
+                        InputEvent::MouseDown { x: tx, y: ty, button: *button }
+                    }
+                    InputEvent::MouseUp { x, y, button } => {
+                        let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
+                        InputEvent::MouseUp { x: tx, y: ty, button: *button }
+                    }
+                    _ => event.clone(),
+                };
+                calibration.handle_event(&transformed_event);
             }
         }
 

@@ -1,75 +1,51 @@
 //! Region Fire Effect
 //!
-//! Fire that burns inside the defined regions instead of filling the background.
-//! Each region becomes a window into a shared fire simulation.
+//! Flames erupt upward from the top edges of defined regions,
+//! as if each region is on fire. The fire simulation runs per-column
+//! with heat sources at the region surfaces.
 
 use super::color::fire_palette;
 use super::Effect;
 use crate::display::PixelBuffer;
-use crate::regions::{Scene, Shape};
+use crate::regions::Scene;
 use crate::util::Rng;
 
-/// Target fire pixel size (keeps the chunky retro look)
-const FIRE_SCALE: u32 = 4;
+/// Fire pixel scale for chunky retro look
+const FIRE_SCALE: u32 = 2;
+/// How high flames can rise above regions (in fire-grid cells)
+const FLAME_HEIGHT: usize = 80;
 /// Fixed simulation rate
 const SIM_STEP: f32 = 1.0 / 60.0;
 
-/// Fire effect that renders inside regions
+/// Fire effect with flames erupting from region surfaces
 pub struct RegionFire {
-    buffer: Vec<u8>,
+    /// Per-column heat values (screen width / scale)
+    heat: Vec<Vec<u8>>,
+    /// Per-column: Y of region surface (-1 if no region)
+    surface_y: Vec<i32>,
     palette: Vec<(u8, u8, u8)>,
     time: f32,
     sim_accum: f32,
     rng: Rng,
     fire_w: usize,
-    fire_h: usize,
-    scale: u32,
-    // Cache the scene for rendering
-    cached_scene: Option<Vec<CachedRegion>>,
+    screen_w: u32,
+    screen_h: u32,
     scene_hash: u64,
-}
-
-#[derive(Clone)]
-struct CachedRegion {
-    min_x: i32,
-    min_y: i32,
-    max_x: i32,
-    max_y: i32,
-    is_circle: bool,
-    // For circles
-    cx: f32,
-    cy: f32,
-    radius: f32,
-    // For polygons - precomputed for fast point-in-polygon
-    vertices: Vec<(f32, f32)>,
 }
 
 impl RegionFire {
     pub fn new() -> Self {
-        let fire_w = 160;
-        let fire_h = 120;
         Self {
-            buffer: vec![0; fire_w * fire_h],
+            heat: Vec::new(),
+            surface_y: Vec::new(),
             palette: fire_palette(),
             time: 0.0,
             sim_accum: 0.0,
             rng: Rng::new(0xF1E3_ABCD),
-            fire_w,
-            fire_h,
-            scale: FIRE_SCALE,
-            cached_scene: None,
+            fire_w: 0,
+            screen_w: 0,
+            screen_h: 0,
             scene_hash: 0,
-        }
-    }
-
-    fn resize(&mut self, width: u32, height: u32) {
-        let new_w = (width / self.scale) as usize;
-        let new_h = (height / self.scale) as usize;
-
-        if new_w != self.fire_w || new_h != self.fire_h {
-            self.fire_w = new_w.max(1);
-            self.fire_h = new_h.max(1);
-            self.buffer = vec![0; self.fire_w * self.fire_h];
         }
     }
 
@@ -86,77 +62,47 @@ impl RegionFire {
         h
     }
 
-    fn cache_scene(&mut self, scene: &Scene) {
-        let hash = Self::hash_scene(scene);
-        if self.scene_hash == hash && self.cached_scene.is_some() {
-            return;
-        }
+    /// Rebuild the surface map - find topmost Y of each region per column
+    fn rebuild_surface(&mut self, width: u32, height: u32, scene: &Scene) {
+        self.screen_w = width;
+        self.screen_h = height;
+        self.fire_w = (width / FIRE_SCALE) as usize;
 
-        let mut cached = Vec::with_capacity(scene.regions.len());
+        // Initialize heat columns
+        self.heat = vec![vec![0u8; FLAME_HEIGHT]; self.fire_w];
+
+        // Initialize surface map (-1 = no surface)
+        self.surface_y = vec![-1; self.fire_w];
+
+        let h = height as i32;
+
+        // Scan each column to find topmost region surface
         for region in &scene.regions {
             let shape = region.get_shape();
             if let Some((min_x, min_y, max_x, max_y)) = shape.bounds() {
-                match shape {
-                    Shape::Circle(c) => {
-                        cached.push(CachedRegion {
-                            min_x: min_x as i32,
-                            min_y: min_y as i32,
-                            max_x: max_x as i32,
-                            max_y: max_y as i32,
-                            is_circle: true,
-                            cx: c.center.x,
-                            cy: c.center.y,
-                            radius: c.radius,
-                            vertices: Vec::new(),
-                        });
-                    }
-                    Shape::Polygon(p) => {
-                        cached.push(CachedRegion {
-                            min_x: min_x as i32,
-                            min_y: min_y as i32,
-                            max_x: max_x as i32,
-                            max_y: max_y as i32,
-                            is_circle: false,
-                            cx: 0.0,
-                            cy: 0.0,
-                            radius: 0.0,
-                            vertices: p.as_tuples(),
-                        });
+                let x0 = ((min_x as i32).max(0) / FIRE_SCALE as i32) as usize;
+                let x1 = (((max_x as i32) + 1).min(width as i32) / FIRE_SCALE as i32) as usize;
+                let y_start = (min_y as i32).max(0);
+                let y_end = ((max_y as i32) + 1).min(h);
+
+                for fire_col in x0..x1.min(self.fire_w) {
+                    let screen_x = (fire_col as i32 * FIRE_SCALE as i32) + (FIRE_SCALE as i32 / 2);
+
+                    // Scan downward to find topmost point inside region
+                    for y in y_start..y_end {
+                        if shape.contains(screen_x as f32, y as f32 + 0.5) {
+                            // Found the top surface at this column
+                            if self.surface_y[fire_col] < 0 || y < self.surface_y[fire_col] {
+                                self.surface_y[fire_col] = y;
+                            }
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        self.cached_scene = Some(cached);
-        self.scene_hash = hash;
-    }
-
-    /// Check if a point is inside a cached region
-    fn point_in_region(region: &CachedRegion, x: f32, y: f32) -> bool {
-        if region.is_circle {
-            let dx = x - region.cx;
-            let dy = y - region.cy;
-            dx * dx + dy * dy <= region.radius * region.radius
-        } else {
-            // Ray casting algorithm
-            let verts = &region.vertices;
-            let n = verts.len();
-            if n < 3 {
-                return false;
-            }
-
-            let mut inside = false;
-            let mut j = n - 1;
-            for i in 0..n {
-                let (xi, yi) = verts[i];
-                let (xj, yj) = verts[j];
-                if ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
-                    inside = !inside;
-                }
-                j = i;
-            }
-            inside
-        }
+        self.scene_hash = Self::hash_scene(scene);
     }
 }
 
@@ -168,14 +114,13 @@ impl Default for RegionFire {
 
 impl Effect for RegionFire {
     fn update(&mut self, dt: f32, width: u32, height: u32, scene: &Scene) {
-        self.resize(width, height);
-        self.cache_scene(scene);
+        let hash = Self::hash_scene(scene);
+        if width != self.screen_w || height != self.screen_h || hash != self.scene_hash {
+            self.rebuild_surface(width, height, scene);
+        }
 
         self.time += dt;
         self.sim_accum += dt;
-
-        let fire_w = self.fire_w;
-        let fire_h = self.fire_h;
 
         let max_steps = 4;
         let mut steps = 0;
@@ -184,38 +129,67 @@ impl Effect for RegionFire {
             self.sim_accum -= SIM_STEP;
             steps += 1;
 
-            // Seed the bottom row with heat
+            let wind = (self.time * 2.0).sin() * 1.5;
+            let fire_w = self.fire_w;
+
+            // Inject heat at surfaces first
             for x in 0..fire_w {
-                let flicker = self.rng.next_u8() % 80;
-                let wave = ((self.time * 6.0 + x as f32 * 0.08).sin() * 40.0) as i32;
-                let base = (180 + wave).clamp(120, 255) as u8;
-                self.buffer[(fire_h - 1) * fire_w + x] = base.saturating_add(flicker);
-            }
-
-            // Propagate heat upwards
-            let wind = (self.time * 2.5).sin() * 2.0;
-            for y in 1..fire_h {
-                for x in 0..fire_w {
-                    let wind_x = (x as i32 + wind as i32 + fire_w as i32) % fire_w as i32;
-                    let x0 = wind_x as usize;
-                    let x1 = (x0 + fire_w - 1) % fire_w;
-                    let x2 = (x0 + 1) % fire_w;
-
-                    let below = self.buffer[y * fire_w + x0] as u16;
-                    let below_left = self.buffer[y * fire_w + x1] as u16;
-                    let below_right = self.buffer[y * fire_w + x2] as u16;
-                    let below2 = if y + 1 < fire_h {
-                        self.buffer[(y + 1) * fire_w + x0] as u16
-                    } else {
-                        below
-                    };
-
-                    let mut heat = (below + below_left + below_right + below2) / 4;
-                    let cooling = 1 + (self.rng.next_u8() % 3) as u16;
-                    heat = heat.saturating_sub(cooling);
-                    self.buffer[(y - 1) * fire_w + x] = heat as u8;
+                if self.surface_y[x] >= 0 {
+                    let flicker = self.rng.next_u8() % 60;
+                    let wave = ((self.time * 8.0 + x as f32 * 0.15).sin() * 30.0) as i32;
+                    let base = (200 + wave).clamp(160, 255) as u8;
+                    self.heat[x][FLAME_HEIGHT - 1] = base.saturating_add(flicker);
+                    if FLAME_HEIGHT > 2 {
+                        self.heat[x][FLAME_HEIGHT - 2] = (base as u16 * 9 / 10) as u8;
+                    }
+                    if FLAME_HEIGHT > 3 {
+                        self.heat[x][FLAME_HEIGHT - 3] = (base as u16 * 7 / 10) as u8;
+                    }
+                } else {
+                    let old = self.heat[x][FLAME_HEIGHT - 1];
+                    self.heat[x][FLAME_HEIGHT - 1] = old.saturating_sub(8);
                 }
             }
+
+            // Propagate heat upward - use temporary storage to avoid borrow issues
+            let mut new_heat = vec![vec![0u8; FLAME_HEIGHT]; fire_w];
+
+            for x in 0..fire_w {
+                // Copy bottom rows (heat sources) as-is
+                new_heat[x][FLAME_HEIGHT - 1] = self.heat[x][FLAME_HEIGHT - 1];
+                if FLAME_HEIGHT > 2 {
+                    new_heat[x][FLAME_HEIGHT - 2] = self.heat[x][FLAME_HEIGHT - 2];
+                }
+                if FLAME_HEIGHT > 3 {
+                    new_heat[x][FLAME_HEIGHT - 3] = self.heat[x][FLAME_HEIGHT - 3];
+                }
+
+                // Propagate from row FLAME_HEIGHT-4 up to row 0
+                for y in 4..FLAME_HEIGHT {
+                    let fy = FLAME_HEIGHT - 1 - y;
+
+                    let wind_off = (wind + (self.rng.next_u8() % 3) as f32 - 1.0) as i32;
+                    let src_x = ((x as i32 + wind_off).rem_euclid(fire_w as i32)) as usize;
+
+                    let below = self.heat[src_x][fy + 1] as u16;
+
+                    let left_x = if x > 0 { x - 1 } else { fire_w - 1 };
+                    let right_x = if x + 1 < fire_w { x + 1 } else { 0 };
+
+                    let below_left = self.heat[left_x][fy + 1] as u16;
+                    let below_right = self.heat[right_x][fy + 1] as u16;
+
+                    let mut heat = (below * 2 + below_left + below_right) / 4;
+
+                    let height_factor = y as u16;
+                    let cooling = 2 + height_factor / 8 + (self.rng.next_u8() % 4) as u16;
+                    heat = heat.saturating_sub(cooling);
+
+                    new_heat[x][fy] = heat as u8;
+                }
+            }
+
+            self.heat = new_heat;
         }
 
         if steps >= max_steps {
@@ -227,36 +201,46 @@ impl Effect for RegionFire {
         // Dark background
         buffer.clear(5, 2, 0);
 
-        let Some(regions) = &self.cached_scene else {
-            return;
-        };
-
-        if regions.is_empty() {
+        if self.heat.is_empty() {
             return;
         }
 
-        let fire_w = self.fire_w;
-        let fire_h = self.fire_h;
-        let scale = self.scale as i32;
+        let scale = FIRE_SCALE as i32;
+        let screen_h = self.screen_h as i32;
 
-        // For each region, render fire pixels that fall within it
-        for region in regions {
-            // Iterate over the region's bounding box
-            for py in region.min_y..=region.max_y {
-                for px in region.min_x..=region.max_x {
-                    // Check if this pixel is inside the region
-                    if !Self::point_in_region(region, px as f32 + 0.5, py as f32 + 0.5) {
-                        continue;
-                    }
+        // Render flames above each region surface
+        for (fire_x, col) in self.heat.iter().enumerate() {
+            let surface = self.surface_y[fire_x];
+            if surface < 0 {
+                continue; // No region at this column
+            }
 
-                    // Map screen pixel to fire buffer coordinate
-                    let fx = (px / scale) as usize;
-                    let fy = (py / scale) as usize;
+            let screen_x = fire_x as i32 * scale;
 
-                    if fx < fire_w && fy < fire_h {
-                        let heat = self.buffer[fy * fire_w + fx] as usize;
-                        let (r, g, b) = self.palette[heat.min(255)];
-                        buffer.set_pixel(px, py, r, g, b);
+            // Draw flame column upward from surface
+            for (fire_y, &heat) in col.iter().enumerate() {
+                if heat < 8 {
+                    continue; // Skip very dim pixels
+                }
+
+                // Convert fire Y to screen Y (fire_y=0 is top, FLAME_HEIGHT-1 is at surface)
+                let y_offset = (FLAME_HEIGHT - 1 - fire_y) as i32;
+                let screen_y = surface - y_offset;
+
+                if screen_y < 0 || screen_y >= screen_h {
+                    continue;
+                }
+
+                let (r, g, b) = self.palette[heat as usize];
+
+                // Draw a block of pixels for this fire cell
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let px = screen_x + dx;
+                        let py = screen_y - dy; // Draw upward
+                        if py >= 0 {
+                            buffer.set_pixel(px, py, r, g, b);
+                        }
                     }
                 }
             }
@@ -268,7 +252,7 @@ impl Effect for RegionFire {
     }
 
     fn region_color(&self) -> (u8, u8, u8) {
-        // Regions ARE the fire, background is dark
-        (5, 2, 0)
+        // Regions should be masked black (fire rises above them)
+        (0, 0, 0)
     }
 }

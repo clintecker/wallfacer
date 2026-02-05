@@ -481,3 +481,28 @@ pub fn circle_polygon_collision(
         None
     }
 }
+
+/// Check if two circles collide.
+/// Returns (normal_x, normal_y, penetration_depth) pointing from circle2 toward circle1.
+pub fn circle_circle_collision(
+    cx1: f32,
+    cy1: f32,
+    r1: f32,
+    cx2: f32,
+    cy2: f32,
+    r2: f32,
+) -> Option<(f32, f32, f32)> {
+    let dx = cx1 - cx2;
+    let dy = cy1 - cy2;
+    let dist = (dx * dx + dy * dy).sqrt();
+    let min_dist = r1 + r2;
+
+    if dist < min_dist && dist > 0.001 {
+        let nx = dx / dist;
+        let ny = dy / dist;
+        let penetration = min_dist - dist;
+        Some((nx, ny, penetration))
+    } else {
+        None
+    }
+}
