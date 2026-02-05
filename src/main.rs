@@ -111,6 +111,30 @@ fn transform_mouse_delta(dx: i32, dy: i32, rotation: Rotation) -> (i32, i32) {
     }
 }
 
+/// Apply mouse acceleration curve
+/// Small movements stay linear, fast movements get amplified
+fn apply_mouse_acceleration(dx: i32, dy: i32) -> (i32, i32) {
+    let speed = ((dx * dx + dy * dy) as f32).sqrt();
+
+    // Acceleration curve: linear up to threshold, then quadratic boost
+    // threshold=3: below this, no acceleration
+    // multiplier ramps from 1.0 to ~2.5 for fast movements
+    let threshold = 3.0;
+    let multiplier = if speed <= threshold {
+        1.0
+    } else {
+        // Quadratic ramp: faster movements get more boost
+        // At speed=10, multiplier ≈ 1.8
+        // At speed=20, multiplier ≈ 2.5
+        1.0 + ((speed - threshold) / 10.0).min(1.5)
+    };
+
+    let ax = (dx as f32 * multiplier).round() as i32;
+    let ay = (dy as f32 * multiplier).round() as i32;
+
+    (ax, ay)
+}
+
 /// Draw a simple arrow cursor at the given position
 fn draw_software_cursor(buffer: &mut PixelBuffer, x: i32, y: i32) {
     // Simple arrow cursor (pointing up-left like standard cursor)
@@ -534,15 +558,12 @@ fn main() -> Result<(), String> {
                     if use_software_cursor {
                         // Calculate delta from previous position
                         if let Some((prev_x, prev_y)) = prev_window_mouse {
-                            let dx = x - prev_x;
-                            let dy = y - prev_y;
+                            let raw_dx = x - prev_x;
+                            let raw_dy = y - prev_y;
+                            // Apply acceleration curve for smoother feel
+                            let (dx, dy) = apply_mouse_acceleration(raw_dx, raw_dy);
                             // Transform delta to content space
                             let (cdx, cdy) = transform_mouse_delta(dx, dy, rotation);
-                            // Debug: log the transform
-                            if dx != 0 || dy != 0 {
-                                eprintln!("Mouse delta: ({}, {}) -> content delta: ({}, {}), cursor: ({}, {})",
-                                    dx, dy, cdx, cdy, software_cursor_pos.0 + cdx, software_cursor_pos.1 + cdy);
-                            }
                             // Update software cursor position with bounds checking
                             software_cursor_pos.0 = (software_cursor_pos.0 + cdx).clamp(0, width as i32 - 1);
                             software_cursor_pos.1 = (software_cursor_pos.1 + cdy).clamp(0, height as i32 - 1);
