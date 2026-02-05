@@ -9,7 +9,7 @@ use crate::geometry::{rect_polygon_collision, reflect};
 use crate::regions::{Scene, Shape};
 use crate::util::hsv_to_rgb;
 
-const LOGO_TEXT: &str = "DVD";
+const LOGO_TEXT: &str = "2389";
 const BASE_LOGO_SCALE: u32 = 4;
 
 /// The DVD bounce effect
