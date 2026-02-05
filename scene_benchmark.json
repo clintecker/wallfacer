@@ -1,0 +1,49 @@
+{
+  "name": "benchmark",
+  "regions": [
+    {
+      "name": "region1",
+      "shape": {
+        "type": "Polygon",
+        "vertices": [
+          {"x": 100, "y": 100},
+          {"x": 300, "y": 100},
+          {"x": 300, "y": 300},
+          {"x": 100, "y": 300}
+        ]
+      }
+    },
+    {
+      "name": "region2",
+      "shape": {
+        "type": "Polygon",
+        "vertices": [
+          {"x": 500, "y": 150},
+          {"x": 700, "y": 150},
+          {"x": 750, "y": 400},
+          {"x": 450, "y": 400}
+        ]
+      }
+    },
+    {
+      "name": "region3",
+      "shape": {
+        "type": "Polygon",
+        "vertices": [
+          {"x": 200, "y": 450},
+          {"x": 400, "y": 500},
+          {"x": 350, "y": 650},
+          {"x": 150, "y": 600}
+        ]
+      }
+    },
+    {
+      "name": "region4",
+      "shape": {
+        "type": "Circle",
+        "center": {"x": 800, "y": 600},
+        "radius": 120
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 // Remove these as the codebase matures
 #![allow(dead_code)]
 
+mod control;
 mod display;
 mod effects;
 mod geometry;
@@ -21,6 +22,7 @@ use effects::{
     Plasma, Raycaster, RegionFire, Ripples, Rotozoomer, Rubber, ScrollerDemo, Snowfall, Starfield,
     TestPattern, TextFxDemo, Tunnel, VectorBalls, Worms,
 };
+use control::{Command, Controller};
 use input::CalibrationMode;
 use regions::Scene;
 use sdl2::keyboard::Keycode;
@@ -71,6 +73,7 @@ struct AppOptions {
     start_effect: Option<usize>,
     rotation: Rotation,
     benchmark_seconds: Option<f32>,
+    scene_file: Option<String>,
 }
 
 /// Parse command line arguments
@@ -83,6 +86,7 @@ fn parse_args() -> AppOptions {
         start_effect: Some(0),
         rotation: Rotation::None,
         benchmark_seconds: None,
+        scene_file: None,
     };
 
     let mut i = 1;
@@ -149,6 +153,12 @@ fn parse_args() -> AppOptions {
                 opts.benchmark_seconds = Some(duration);
                 opts.vsync = false; // Benchmark always runs without vsync
             },
+            "--scene" | "-s" => {
+                if i + 1 < args.len() {
+                    opts.scene_file = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            },
             "--help" => {
                 println!("Usage: wallfacer [OPTIONS]");
                 println!();
@@ -165,6 +175,7 @@ fn parse_args() -> AppOptions {
                 println!("  --effect N, -e N      Start with effect number N (0-indexed)");
                 println!("  --rotate N            Rotate display (0, 90, 180, 270)");
                 println!("  --benchmark [S], -b   Run benchmark for S seconds (default: 10)");
+                println!("  --scene FILE, -s      Load scene/regions from FILE");
                 println!("  --no-vsync            Disable VSync for uncapped framerate");
                 println!("  --help                Show this help message");
                 std::process::exit(0);
@@ -185,6 +196,7 @@ fn main() -> Result<(), String> {
     let start_effect = opts.start_effect;
     let rotation = opts.rotation;
     let benchmark_seconds = opts.benchmark_seconds;
+    let scene_file = opts.scene_file;
 
     // For 90/270 rotation, the window dimensions are swapped
     let (window_w, window_h) = match rotation {
@@ -205,7 +217,16 @@ fn main() -> Result<(), String> {
     let mut total_elapsed = 0.0f32;
 
     // Load scene or create new
-    let scene = Scene::load("scene.json").unwrap_or_else(|_| Scene::new("default"));
+    let scene_path = scene_file.as_deref().unwrap_or("scene.json");
+    let scene = Scene::load(scene_path).unwrap_or_else(|e| {
+        if benchmark_seconds.is_some() {
+            eprintln!("Warning: Failed to load scene '{}': {}", scene_path, e);
+        }
+        Scene::new("default")
+    });
+    if benchmark_seconds.is_some() {
+        println!("Scene: {} ({} regions)", scene_path, scene.regions.len());
+    }
 
     // Available effects
     let mut effects: Vec<Box<dyn Effect>> = vec![
@@ -238,11 +259,20 @@ fn main() -> Result<(), String> {
     // None = test pattern, Some(idx) = effects[idx]
     // Clamp start_effect to valid range
     let mut current_effect: Option<usize> = start_effect.map(|e: usize| e.min(effects.len() - 1));
-    eprintln!("DEBUG: start_effect={:?}, effects.len()={}, current_effect={:?}", start_effect, effects.len(), current_effect);
 
     // Calibration mode
     let mut calibration = CalibrationMode::new(scene);
     let mut mode = AppMode::Effect;
+
+    // Cursor auto-hide after 60 seconds of no mouse movement
+    let mut last_mouse_move: f32 = 0.0;
+    const CURSOR_HIDE_DELAY: f32 = 60.0;
+
+    // Remote control socket
+    let controller = Controller::new().ok();
+    if controller.is_some() {
+        eprintln!("Control socket: {}", Controller::socket_path());
+    }
 
     // Get effect name for benchmark output
     let effect_name = match current_effect {
@@ -409,9 +439,78 @@ fn main() -> Result<(), String> {
                 }
             }
 
+            // Track mouse movement for cursor auto-hide
+            if matches!(&event, InputEvent::MouseMove { .. } | InputEvent::MouseDown { .. }) {
+                last_mouse_move = total_elapsed;
+                if !display.is_cursor_visible() {
+                    display.show_cursor();
+                }
+            }
+
             // Pass all events to calibration mode (mouse move, down, up)
             if mode == AppMode::Calibration && benchmark_seconds.is_none() {
                 calibration.handle_event(&event);
+            }
+        }
+
+        // Auto-hide cursor after 60 seconds of no mouse activity
+        if display.is_cursor_visible() && total_elapsed - last_mouse_move > CURSOR_HIDE_DELAY {
+            display.hide_cursor();
+        }
+
+        // Process remote control commands
+        if let Some(ref ctrl) = controller {
+            for cmd in ctrl.poll() {
+                match cmd {
+                    Command::Left => {
+                        current_effect = match current_effect {
+                            Some(0) => None,
+                            Some(idx) => Some(idx - 1),
+                            None => Some(effects.len() - 1),
+                        };
+                    }
+                    Command::Right => {
+                        current_effect = match current_effect {
+                            Some(idx) if idx + 1 >= effects.len() => None,
+                            Some(idx) => Some(idx + 1),
+                            None => Some(0),
+                        };
+                    }
+                    Command::Tab => {
+                        mode = if mode == AppMode::Effect {
+                            AppMode::Calibration
+                        } else {
+                            AppMode::Effect
+                        };
+                    }
+                    Command::ToggleFps => {
+                        show_fps = !show_fps;
+                    }
+                    Command::Save => {
+                        if let Err(e) = calibration.scene().save("scene.json") {
+                            eprintln!("Failed to save: {}", e);
+                        } else {
+                            eprintln!("Scene saved to scene.json");
+                        }
+                    }
+                    Command::Load => {
+                        match Scene::load("scene.json") {
+                            Ok(scene) => {
+                                calibration = CalibrationMode::new(scene);
+                                eprintln!("Scene loaded from scene.json");
+                            }
+                            Err(e) => eprintln!("Failed to load: {}", e),
+                        }
+                    }
+                    Command::Quit => {
+                        break 'main;
+                    }
+                    Command::Effect(n) => {
+                        if n < effects.len() {
+                            current_effect = Some(n);
+                        }
+                    }
+                }
             }
         }
 

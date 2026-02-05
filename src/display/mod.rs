@@ -22,12 +22,13 @@ use sdl2::mouse::MouseButton;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Canvas, Texture, TextureCreator};
 use sdl2::video::{Window, WindowContext};
-use sdl2::EventPump;
+use sdl2::{EventPump, Sdl};
 
 pub const DEFAULT_WIDTH: u32 = 640;
 pub const DEFAULT_HEIGHT: u32 = 480;
 
 pub struct Display {
+    sdl_context: Sdl,
     canvas: Canvas<Window>,
     event_pump: EventPump,
     width: u32,
@@ -111,6 +112,7 @@ impl Display {
 
         Ok((
             Self {
+                sdl_context,
                 canvas,
                 event_pump,
                 width,
@@ -141,6 +143,21 @@ impl Display {
         self.canvas.copy(&target.texture, None, None)?;
         self.canvas.present();
         Ok(())
+    }
+
+    /// Show the mouse cursor
+    pub fn show_cursor(&self) {
+        self.sdl_context.mouse().show_cursor(true);
+    }
+
+    /// Hide the mouse cursor
+    pub fn hide_cursor(&self) {
+        self.sdl_context.mouse().show_cursor(false);
+    }
+
+    /// Check if cursor is visible
+    pub fn is_cursor_visible(&self) -> bool {
+        self.sdl_context.mouse().is_cursor_showing()
     }
 
     pub fn poll_events(&mut self) -> Vec<InputEvent> {
