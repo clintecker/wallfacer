@@ -538,6 +538,11 @@ fn main() -> Result<(), String> {
                             let dy = y - prev_y;
                             // Transform delta to content space
                             let (cdx, cdy) = transform_mouse_delta(dx, dy, rotation);
+                            // Debug: log the transform
+                            if dx != 0 || dy != 0 {
+                                eprintln!("Mouse delta: ({}, {}) -> content delta: ({}, {}), cursor: ({}, {})",
+                                    dx, dy, cdx, cdy, software_cursor_pos.0 + cdx, software_cursor_pos.1 + cdy);
+                            }
                             // Update software cursor position with bounds checking
                             software_cursor_pos.0 = (software_cursor_pos.0 + cdx).clamp(0, width as i32 - 1);
                             software_cursor_pos.1 = (software_cursor_pos.1 + cdy).clamp(0, height as i32 - 1);
