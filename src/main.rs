@@ -66,22 +66,77 @@ pub enum Rotation {
 }
 
 /// Transform window coordinates to content coordinates based on rotation
+/// This is the inverse of the rotation applied during rendering
 fn transform_mouse(wx: i32, wy: i32, rotation: Rotation, content_w: u32, content_h: u32) -> (i32, i32) {
     match rotation {
         Rotation::None => (wx, wy),
         Rotation::Cw90 => {
-            // Window is (content_h x content_w), content is (content_w x content_h)
-            // rotated_90: (x,y) -> (h-1-y, x), so inverse: (rx,ry) -> (ry, h-1-rx)
+            // Rotation: content(x,y) -> window(h-1-y, x) where h=content_h
+            // Inverse: window(wx,wy) -> content(wy, h-1-wx)
             (wy, content_h as i32 - 1 - wx)
         }
         Rotation::Cw180 => {
-            // Inverse: (rx,ry) -> (w-1-rx, h-1-ry)
             (content_w as i32 - 1 - wx, content_h as i32 - 1 - wy)
         }
         Rotation::Cw270 => {
-            // rotated_270: (x,y) -> (y, w-1-x), so inverse: (rx,ry) -> (w-1-ry, rx)
+            // Rotation: content(x,y) -> window(y, w-1-x) where w=content_w
+            // Inverse: window(wx,wy) -> content(w-1-wy, wx)
             (content_w as i32 - 1 - wy, wx)
         }
+    }
+}
+
+/// Transform mouse movement delta from window space to content space
+/// This makes mouse movement feel natural when display is rotated
+fn transform_mouse_delta(dx: i32, dy: i32, rotation: Rotation) -> (i32, i32) {
+    match rotation {
+        Rotation::None => (dx, dy),
+        Rotation::Cw90 => {
+            // Content is rotated 90° CW on display
+            // Physical right (window +X) should move cursor right in content (+X)
+            // But window +X is content -Y after rotation, so we need to transform:
+            // content delta = (dy, -dx)
+            (dy, -dx)
+        }
+        Rotation::Cw180 => {
+            // Content is upside down
+            // Physical right (+X) should move cursor right (+X in content = -X in window)
+            (-dx, -dy)
+        }
+        Rotation::Cw270 => {
+            // Content is rotated 270° CW (90° CCW)
+            // Physical right (window +X) is content +Y, physical down is content -X
+            (-dy, dx)
+        }
+    }
+}
+
+/// Draw a simple arrow cursor at the given position
+fn draw_software_cursor(buffer: &mut PixelBuffer, x: i32, y: i32) {
+    // Simple arrow cursor (pointing up-left like standard cursor)
+    let cursor = [
+        (0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8), (0, 9),
+        (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
+        (2, 2), (2, 3), (2, 4), (2, 5), (2, 6), (2, 7),
+        (3, 3), (3, 4), (3, 5), (3, 6),
+        (4, 4), (4, 5), (4, 6), (4, 7),
+        (5, 5), (5, 6), (5, 7), (5, 8),
+        (6, 6), (6, 7), (6, 8), (6, 9),
+        (7, 7), (7, 8),
+        (8, 8),
+    ];
+
+    // Draw black outline
+    for &(dx, dy) in &cursor {
+        buffer.set_pixel(x + dx - 1, y + dy, 0, 0, 0);
+        buffer.set_pixel(x + dx + 1, y + dy, 0, 0, 0);
+        buffer.set_pixel(x + dx, y + dy - 1, 0, 0, 0);
+        buffer.set_pixel(x + dx, y + dy + 1, 0, 0, 0);
+    }
+
+    // Draw white cursor
+    for &(dx, dy) in &cursor {
+        buffer.set_pixel(x + dx, y + dy, 255, 255, 255);
     }
 }
 
@@ -288,6 +343,17 @@ fn main() -> Result<(), String> {
     let mut last_mouse_move: f32 = 0.0;
     const CURSOR_HIDE_DELAY: f32 = 60.0;
 
+    // Software cursor for rotated displays
+    // When rotation is active, we hide the OS cursor and render our own
+    // so mouse movement feels natural in the rotated content space
+    let use_software_cursor = rotation != Rotation::None;
+    let mut software_cursor_pos: (i32, i32) = (width as i32 / 2, height as i32 / 2);
+    let mut prev_window_mouse: Option<(i32, i32)> = None;
+    let mut cursor_visible = true;
+    if use_software_cursor {
+        display.hide_cursor(); // Always hide OS cursor when using software cursor
+    }
+
     // Remote control socket
     let controller = Controller::new().ok();
     if controller.is_some() {
@@ -459,39 +525,85 @@ fn main() -> Result<(), String> {
                 }
             }
 
-            // Track mouse movement for cursor auto-hide
-            if matches!(&event, InputEvent::MouseMove { .. } | InputEvent::MouseDown { .. }) {
-                last_mouse_move = total_elapsed;
-                if !display.is_cursor_visible() {
-                    display.show_cursor();
+            // Track mouse movement for cursor auto-hide and software cursor
+            match &event {
+                InputEvent::MouseMove { x, y } => {
+                    last_mouse_move = total_elapsed;
+                    cursor_visible = true;
+
+                    if use_software_cursor {
+                        // Calculate delta from previous position
+                        if let Some((prev_x, prev_y)) = prev_window_mouse {
+                            let dx = x - prev_x;
+                            let dy = y - prev_y;
+                            // Transform delta to content space
+                            let (cdx, cdy) = transform_mouse_delta(dx, dy, rotation);
+                            // Update software cursor position with bounds checking
+                            software_cursor_pos.0 = (software_cursor_pos.0 + cdx).clamp(0, width as i32 - 1);
+                            software_cursor_pos.1 = (software_cursor_pos.1 + cdy).clamp(0, height as i32 - 1);
+                        }
+                        prev_window_mouse = Some((*x, *y));
+                    } else if !display.is_cursor_visible() {
+                        display.show_cursor();
+                    }
                 }
+                InputEvent::MouseDown { x, y, .. } => {
+                    last_mouse_move = total_elapsed;
+                    cursor_visible = true;
+                    if use_software_cursor {
+                        prev_window_mouse = Some((*x, *y));
+                    } else if !display.is_cursor_visible() {
+                        display.show_cursor();
+                    }
+                }
+                _ => {}
             }
 
             // Pass all events to calibration mode (mouse move, down, up)
-            // Transform mouse coordinates if display is rotated
+            // Use software cursor position if rotation is active, otherwise transform window coords
             if mode == AppMode::Calibration && benchmark_seconds.is_none() {
-                let transformed_event = match &event {
-                    InputEvent::MouseMove { x, y } => {
-                        let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
-                        InputEvent::MouseMove { x: tx, y: ty }
+                let transformed_event = if use_software_cursor {
+                    // Use software cursor position for all mouse events
+                    match &event {
+                        InputEvent::MouseMove { .. } => {
+                            InputEvent::MouseMove { x: software_cursor_pos.0, y: software_cursor_pos.1 }
+                        }
+                        InputEvent::MouseDown { button, .. } => {
+                            InputEvent::MouseDown { x: software_cursor_pos.0, y: software_cursor_pos.1, button: *button }
+                        }
+                        InputEvent::MouseUp { button, .. } => {
+                            InputEvent::MouseUp { x: software_cursor_pos.0, y: software_cursor_pos.1, button: *button }
+                        }
+                        _ => event.clone(),
                     }
-                    InputEvent::MouseDown { x, y, button } => {
-                        let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
-                        InputEvent::MouseDown { x: tx, y: ty, button: *button }
+                } else {
+                    // Transform window coordinates to content coordinates
+                    match &event {
+                        InputEvent::MouseMove { x, y } => {
+                            let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
+                            InputEvent::MouseMove { x: tx, y: ty }
+                        }
+                        InputEvent::MouseDown { x, y, button } => {
+                            let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
+                            InputEvent::MouseDown { x: tx, y: ty, button: *button }
+                        }
+                        InputEvent::MouseUp { x, y, button } => {
+                            let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
+                            InputEvent::MouseUp { x: tx, y: ty, button: *button }
+                        }
+                        _ => event.clone(),
                     }
-                    InputEvent::MouseUp { x, y, button } => {
-                        let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
-                        InputEvent::MouseUp { x: tx, y: ty, button: *button }
-                    }
-                    _ => event.clone(),
                 };
                 calibration.handle_event(&transformed_event);
             }
         }
 
         // Auto-hide cursor after 60 seconds of no mouse activity
-        if display.is_cursor_visible() && total_elapsed - last_mouse_move > CURSOR_HIDE_DELAY {
-            display.hide_cursor();
+        if total_elapsed - last_mouse_move > CURSOR_HIDE_DELAY {
+            cursor_visible = false;
+            if !use_software_cursor && display.is_cursor_visible() {
+                display.hide_cursor();
+            }
         }
 
         // Process remote control commands
@@ -582,6 +694,11 @@ fn main() -> Result<(), String> {
             }
             // Overlay calibration UI
             calibration.render(&mut buffer);
+        }
+
+        // Draw software cursor when rotation is active
+        if use_software_cursor && cursor_visible {
+            draw_software_cursor(&mut buffer, software_cursor_pos.0, software_cursor_pos.1);
         }
 
         // FPS overlay (press F to toggle)
