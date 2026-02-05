@@ -367,15 +367,18 @@ fn main() -> Result<(), String> {
     let mut last_mouse_move: f32 = 0.0;
     const CURSOR_HIDE_DELAY: f32 = 60.0;
 
-    // Software cursor for rotated displays
-    // When rotation is active, we hide the OS cursor and render our own
-    // so mouse movement feels natural in the rotated content space
-    let use_software_cursor = rotation != Rotation::None;
-    let mut software_cursor_pos: (i32, i32) = (width as i32 / 2, height as i32 / 2);
-    let mut prev_window_mouse: Option<(i32, i32)> = None;
+    // Keyboard cursor for calibration mode on rotated displays
+    // Arrow keys move cursor, Enter clicks - much simpler than mouse transforms
+    let mut cursor_pos: (i32, i32) = (width as i32 / 2, height as i32 / 2);
     let mut cursor_visible = true;
-    if use_software_cursor {
-        display.hide_cursor(); // Always hide OS cursor when using software cursor
+    const CURSOR_STEP: i32 = 5; // Pixels per arrow key press
+    const CURSOR_STEP_FAST: i32 = 20; // Pixels when holding shift
+    let mut shift_held = false;
+
+    // On rotated displays, hide OS cursor and use keyboard cursor exclusively
+    let use_keyboard_cursor = rotation != Rotation::None;
+    if use_keyboard_cursor {
+        display.hide_cursor();
     }
 
     // Remote control socket
@@ -529,105 +532,102 @@ fn main() -> Result<(), String> {
                         }
                         continue;
                     },
+                    Keycode::LShift | Keycode::RShift => {
+                        shift_held = true;
+                        continue;
+                    },
                     Keycode::Left => {
-                        current_effect = match current_effect {
-                            Some(0) => None,
-                            Some(idx) => Some(idx - 1),
-                            None => Some(effects.len() - 1),
-                        };
+                        if mode == AppMode::Calibration && use_keyboard_cursor {
+                            let step = if shift_held { CURSOR_STEP_FAST } else { CURSOR_STEP };
+                            cursor_pos.0 = (cursor_pos.0 - step).max(0);
+                            // Send mouse move event to calibration
+                            let evt = InputEvent::MouseMove { x: cursor_pos.0, y: cursor_pos.1 };
+                            calibration.handle_event(&evt);
+                        } else {
+                            current_effect = match current_effect {
+                                Some(0) => None,
+                                Some(idx) => Some(idx - 1),
+                                None => Some(effects.len() - 1),
+                            };
+                        }
                         continue;
                     },
                     Keycode::Right => {
-                        current_effect = match current_effect {
-                            Some(idx) if idx + 1 >= effects.len() => None,
-                            Some(idx) => Some(idx + 1),
-                            None => Some(0),
-                        };
+                        if mode == AppMode::Calibration && use_keyboard_cursor {
+                            let step = if shift_held { CURSOR_STEP_FAST } else { CURSOR_STEP };
+                            cursor_pos.0 = (cursor_pos.0 + step).min(width as i32 - 1);
+                            let evt = InputEvent::MouseMove { x: cursor_pos.0, y: cursor_pos.1 };
+                            calibration.handle_event(&evt);
+                        } else {
+                            current_effect = match current_effect {
+                                Some(idx) if idx + 1 >= effects.len() => None,
+                                Some(idx) => Some(idx + 1),
+                                None => Some(0),
+                            };
+                        }
+                        continue;
+                    },
+                    Keycode::Up => {
+                        if mode == AppMode::Calibration && use_keyboard_cursor {
+                            let step = if shift_held { CURSOR_STEP_FAST } else { CURSOR_STEP };
+                            cursor_pos.1 = (cursor_pos.1 - step).max(0);
+                            let evt = InputEvent::MouseMove { x: cursor_pos.0, y: cursor_pos.1 };
+                            calibration.handle_event(&evt);
+                        }
+                        continue;
+                    },
+                    Keycode::Down => {
+                        if mode == AppMode::Calibration && use_keyboard_cursor {
+                            let step = if shift_held { CURSOR_STEP_FAST } else { CURSOR_STEP };
+                            cursor_pos.1 = (cursor_pos.1 + step).min(height as i32 - 1);
+                            let evt = InputEvent::MouseMove { x: cursor_pos.0, y: cursor_pos.1 };
+                            calibration.handle_event(&evt);
+                        }
+                        continue;
+                    },
+                    Keycode::Return | Keycode::KpEnter => {
+                        if mode == AppMode::Calibration && use_keyboard_cursor {
+                            // Simulate left click at cursor position
+                            use display::MouseButtonKind;
+                            let down = InputEvent::MouseDown { x: cursor_pos.0, y: cursor_pos.1, button: MouseButtonKind::Left };
+                            let up = InputEvent::MouseUp { x: cursor_pos.0, y: cursor_pos.1, button: MouseButtonKind::Left };
+                            calibration.handle_event(&down);
+                            calibration.handle_event(&up);
+                        }
                         continue;
                     },
                     _ => {},
                 }
             }
 
-            // Track mouse movement for cursor auto-hide and software cursor
-            match &event {
-                InputEvent::MouseMove { x, y } => {
-                    last_mouse_move = total_elapsed;
-                    cursor_visible = true;
-
-                    if use_software_cursor {
-                        // Calculate delta from previous position
-                        if let Some((prev_x, prev_y)) = prev_window_mouse {
-                            let raw_dx = x - prev_x;
-                            let raw_dy = y - prev_y;
-                            // Apply acceleration curve for smoother feel
-                            let (dx, dy) = apply_mouse_acceleration(raw_dx, raw_dy);
-                            // Transform delta to content space
-                            let (cdx, cdy) = transform_mouse_delta(dx, dy, rotation);
-                            // Update software cursor position with bounds checking
-                            software_cursor_pos.0 = (software_cursor_pos.0 + cdx).clamp(0, width as i32 - 1);
-                            software_cursor_pos.1 = (software_cursor_pos.1 + cdy).clamp(0, height as i32 - 1);
-                        }
-                        prev_window_mouse = Some((*x, *y));
-                    } else if !display.is_cursor_visible() {
-                        display.show_cursor();
-                    }
+            // Track shift key release
+            if let InputEvent::KeyUp(key) = &event {
+                if *key == Keycode::LShift || *key == Keycode::RShift {
+                    shift_held = false;
                 }
-                InputEvent::MouseDown { x, y, .. } => {
-                    last_mouse_move = total_elapsed;
-                    cursor_visible = true;
-                    if use_software_cursor {
-                        prev_window_mouse = Some((*x, *y));
-                    } else if !display.is_cursor_visible() {
-                        display.show_cursor();
-                    }
-                }
-                _ => {}
             }
 
-            // Pass all events to calibration mode (mouse move, down, up)
-            // Use software cursor position if rotation is active, otherwise transform window coords
-            if mode == AppMode::Calibration && benchmark_seconds.is_none() {
-                let transformed_event = if use_software_cursor {
-                    // Use software cursor position for all mouse events
-                    match &event {
-                        InputEvent::MouseMove { .. } => {
-                            InputEvent::MouseMove { x: software_cursor_pos.0, y: software_cursor_pos.1 }
-                        }
-                        InputEvent::MouseDown { button, .. } => {
-                            InputEvent::MouseDown { x: software_cursor_pos.0, y: software_cursor_pos.1, button: *button }
-                        }
-                        InputEvent::MouseUp { button, .. } => {
-                            InputEvent::MouseUp { x: software_cursor_pos.0, y: software_cursor_pos.1, button: *button }
-                        }
-                        _ => event.clone(),
+            // Track mouse movement for cursor auto-hide (non-rotated mode only)
+            if !use_keyboard_cursor {
+                if matches!(&event, InputEvent::MouseMove { .. } | InputEvent::MouseDown { .. }) {
+                    last_mouse_move = total_elapsed;
+                    cursor_visible = true;
+                    if !display.is_cursor_visible() {
+                        display.show_cursor();
                     }
-                } else {
-                    // Transform window coordinates to content coordinates
-                    match &event {
-                        InputEvent::MouseMove { x, y } => {
-                            let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
-                            InputEvent::MouseMove { x: tx, y: ty }
-                        }
-                        InputEvent::MouseDown { x, y, button } => {
-                            let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
-                            InputEvent::MouseDown { x: tx, y: ty, button: *button }
-                        }
-                        InputEvent::MouseUp { x, y, button } => {
-                            let (tx, ty) = transform_mouse(*x, *y, rotation, width, height);
-                            InputEvent::MouseUp { x: tx, y: ty, button: *button }
-                        }
-                        _ => event.clone(),
-                    }
-                };
-                calibration.handle_event(&transformed_event);
+                }
+
+                // Pass mouse events to calibration mode (non-rotated only, rotated uses keyboard)
+                if mode == AppMode::Calibration && benchmark_seconds.is_none() {
+                    calibration.handle_event(&event);
+                }
             }
         }
 
         // Auto-hide cursor after 60 seconds of no mouse activity
         if total_elapsed - last_mouse_move > CURSOR_HIDE_DELAY {
             cursor_visible = false;
-            if !use_software_cursor && display.is_cursor_visible() {
+            if !use_keyboard_cursor && display.is_cursor_visible() {
                 display.hide_cursor();
             }
         }
@@ -722,9 +722,9 @@ fn main() -> Result<(), String> {
             calibration.render(&mut buffer);
         }
 
-        // Draw software cursor when rotation is active
-        if use_software_cursor && cursor_visible {
-            draw_software_cursor(&mut buffer, software_cursor_pos.0, software_cursor_pos.1);
+        // Draw keyboard cursor when in calibration mode with rotation
+        if use_keyboard_cursor && mode == AppMode::Calibration && cursor_visible {
+            draw_software_cursor(&mut buffer, cursor_pos.0, cursor_pos.1);
         }
 
         // FPS overlay (press F to toggle)

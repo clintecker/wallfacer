@@ -13,7 +13,7 @@ use crate::util::Rng;
 /// Fire pixel scale for chunky retro look
 const FIRE_SCALE: u32 = 2;
 /// How high flames can rise above regions (in fire-grid cells)
-const FLAME_HEIGHT: usize = 80;
+const FLAME_HEIGHT: usize = 150;
 /// Fixed simulation rate
 const SIM_STEP: f32 = 1.0 / 60.0;
 
@@ -129,67 +129,57 @@ impl Effect for RegionFire {
             self.sim_accum -= SIM_STEP;
             steps += 1;
 
-            let wind = (self.time * 2.0).sin() * 1.5;
             let fire_w = self.fire_w;
 
-            // Inject heat at surfaces first
+            // Process each column - classic fire algorithm
             for x in 0..fire_w {
+                // Inject heat at surface (bottom of flame column)
                 if self.surface_y[x] >= 0 {
-                    let flicker = self.rng.next_u8() % 60;
-                    let wave = ((self.time * 8.0 + x as f32 * 0.15).sin() * 30.0) as i32;
-                    let base = (200 + wave).clamp(160, 255) as u8;
+                    // Strong, flickering heat source
+                    let flicker = self.rng.next_u8() % 55;
+                    let wave = ((self.time * 6.0 + x as f32 * 0.08).sin() * 25.0) as i32;
+                    let base = (230 + wave).clamp(200, 255) as u8;
                     self.heat[x][FLAME_HEIGHT - 1] = base.saturating_add(flicker);
+                    // Add extra heat in rows above for thicker base
                     if FLAME_HEIGHT > 2 {
-                        self.heat[x][FLAME_HEIGHT - 2] = (base as u16 * 9 / 10) as u8;
+                        self.heat[x][FLAME_HEIGHT - 2] = base.saturating_add(flicker / 2);
                     }
                     if FLAME_HEIGHT > 3 {
-                        self.heat[x][FLAME_HEIGHT - 3] = (base as u16 * 7 / 10) as u8;
+                        self.heat[x][FLAME_HEIGHT - 3] = (base as u16 * 9 / 10) as u8;
+                    }
+                    if FLAME_HEIGHT > 4 {
+                        self.heat[x][FLAME_HEIGHT - 4] = (base as u16 * 8 / 10) as u8;
                     }
                 } else {
-                    let old = self.heat[x][FLAME_HEIGHT - 1];
-                    self.heat[x][FLAME_HEIGHT - 1] = old.saturating_sub(8);
-                }
-            }
-
-            // Propagate heat upward - use temporary storage to avoid borrow issues
-            let mut new_heat = vec![vec![0u8; FLAME_HEIGHT]; fire_w];
-
-            for x in 0..fire_w {
-                // Copy bottom rows (heat sources) as-is
-                new_heat[x][FLAME_HEIGHT - 1] = self.heat[x][FLAME_HEIGHT - 1];
-                if FLAME_HEIGHT > 2 {
-                    new_heat[x][FLAME_HEIGHT - 2] = self.heat[x][FLAME_HEIGHT - 2];
-                }
-                if FLAME_HEIGHT > 3 {
-                    new_heat[x][FLAME_HEIGHT - 3] = self.heat[x][FLAME_HEIGHT - 3];
+                    // Cool down columns without surfaces
+                    self.heat[x][FLAME_HEIGHT - 1] =
+                        self.heat[x][FLAME_HEIGHT - 1].saturating_sub(10);
                 }
 
-                // Propagate from row FLAME_HEIGHT-4 up to row 0
-                for y in 4..FLAME_HEIGHT {
-                    let fy = FLAME_HEIGHT - 1 - y;
+                // Propagate heat upward (from bottom to top)
+                for fy in (0..FLAME_HEIGHT - 4).rev() {
+                    // Get heat from row below
+                    let below = self.heat[x][fy + 1] as u16;
 
-                    let wind_off = (wind + (self.rng.next_u8() % 3) as f32 - 1.0) as i32;
-                    let src_x = ((x as i32 + wind_off).rem_euclid(fire_w as i32)) as usize;
-
-                    let below = self.heat[src_x][fy + 1] as u16;
-
-                    let left_x = if x > 0 { x - 1 } else { fire_w - 1 };
-                    let right_x = if x + 1 < fire_w { x + 1 } else { 0 };
+                    // Get neighbors from adjacent columns (for spread)
+                    let left_x = if x > 0 { x - 1 } else { 0 };
+                    let right_x = if x + 1 < fire_w { x + 1 } else { fire_w - 1 };
 
                     let below_left = self.heat[left_x][fy + 1] as u16;
                     let below_right = self.heat[right_x][fy + 1] as u16;
 
-                    let mut heat = (below * 2 + below_left + below_right) / 4;
+                    // Weighted average - favor center for tall vertical flames
+                    let avg = (below * 4 + below_left + below_right) / 6;
 
-                    let height_factor = y as u16;
-                    let cooling = 2 + height_factor / 8 + (self.rng.next_u8() % 4) as u16;
-                    heat = heat.saturating_sub(cooling);
+                    // Gentle cooling - flames rise high before fading
+                    let height_from_bottom = (FLAME_HEIGHT - 1 - fy) as u16;
+                    let base_cooling = 1 + height_from_bottom / 15;
+                    let random_cooling = (self.rng.next_u8() % 3) as u16;
 
-                    new_heat[x][fy] = heat as u8;
+                    let heat = avg.saturating_sub(base_cooling + random_cooling);
+                    self.heat[x][fy] = heat as u8;
                 }
             }
-
-            self.heat = new_heat;
         }
 
         if steps >= max_steps {
@@ -206,9 +196,8 @@ impl Effect for RegionFire {
         }
 
         let scale = FIRE_SCALE as i32;
-        let screen_h = self.screen_h as i32;
 
-        // Render flames above each region surface
+        // Render flames ABOVE each region surface (so they're not masked)
         for (fire_x, col) in self.heat.iter().enumerate() {
             let surface = self.surface_y[fire_x];
             if surface < 0 {
@@ -218,16 +207,26 @@ impl Effect for RegionFire {
             let screen_x = fire_x as i32 * scale;
 
             // Draw flame column upward from surface
+            // fire_y=FLAME_HEIGHT-1 is heat source (at surface), fire_y=0 is top of flame
             for (fire_y, &heat) in col.iter().enumerate() {
                 if heat < 8 {
                     continue; // Skip very dim pixels
                 }
 
-                // Convert fire Y to screen Y (fire_y=0 is top, FLAME_HEIGHT-1 is at surface)
+                // y_offset: how far above the surface this fire cell is
+                // fire_y=FLAME_HEIGHT-1 -> y_offset=0 (at surface)
+                // fire_y=0 -> y_offset=FLAME_HEIGHT-1 (far above)
                 let y_offset = (FLAME_HEIGHT - 1 - fire_y) as i32;
+
+                // Render flames starting ABOVE the surface (surface - 1 and up)
+                // Skip the first few fire rows so flames don't overlap region
+                if y_offset < 1 {
+                    continue; // Don't render at or below surface
+                }
+
                 let screen_y = surface - y_offset;
 
-                if screen_y < 0 || screen_y >= screen_h {
+                if screen_y < 0 {
                     continue;
                 }
 
@@ -237,8 +236,8 @@ impl Effect for RegionFire {
                 for dy in 0..scale {
                     for dx in 0..scale {
                         let px = screen_x + dx;
-                        let py = screen_y - dy; // Draw upward
-                        if py >= 0 {
+                        let py = screen_y + dy;
+                        if py >= 0 && py < surface {
                             buffer.set_pixel(px, py, r, g, b);
                         }
                     }
