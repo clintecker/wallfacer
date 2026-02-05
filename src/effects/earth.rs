@@ -7,6 +7,7 @@ use std::f32::consts::{PI, TAU};
 
 use super::Effect;
 use crate::display::PixelBuffer;
+use crate::geometry::{rect_polygon_collision, reflect};
 use crate::math3d::{project, Mesh, Vec3};
 use crate::regions::Scene;
 use crate::texture::Texture;
@@ -328,7 +329,7 @@ fn point_to_uv(p: Vec3) -> (f32, f32) {
 }
 
 impl Effect for Earth {
-    fn update(&mut self, dt: f32, width: u32, height: u32, _scene: &Scene) {
+    fn update(&mut self, dt: f32, width: u32, height: u32, scene: &Scene) {
         self.time += dt;
         // Earth rotates slowly around Y
         self.earth_rotation.y += 0.15 * dt;
@@ -369,6 +370,27 @@ impl Effect for Earth {
             self.vel_y = -self.vel_y.abs();
         } else {
             self.pos_y = new_y;
+        }
+
+        // Polygon region collision (bounding square around globe)
+        let side = visual_radius * 2.0;
+        for region in &scene.regions {
+            let verts = region.polygon.as_tuples();
+            if let Some((nx, ny, dist)) = rect_polygon_collision(
+                self.pos_x - visual_radius,
+                self.pos_y - visual_radius,
+                side,
+                side,
+                &verts,
+            ) {
+                let (new_vx, new_vy) = reflect(self.vel_x, self.vel_y, nx, ny);
+                self.vel_x = new_vx;
+                self.vel_y = new_vy;
+                let push_dist = dist + 10.0;
+                self.pos_x += nx * push_dist;
+                self.pos_y += ny * push_dist;
+                break;
+            }
         }
 
         // --- Spawn starbursts ---
@@ -609,6 +631,10 @@ impl Effect for Earth {
 
     fn name(&self) -> &str {
         "Earth"
+    }
+
+    fn region_color(&self) -> (u8, u8, u8) {
+        (10, 20, 45)
     }
 }
 
