@@ -194,9 +194,14 @@ impl Tunnel {
 
     fn compute_curve(&mut self) {
         let t = self.time;
+        // Scale curve amplitudes proportionally to screen size
+        // (designed for 640x480 — at 320x240 amplitudes halve, etc.)
+        let sx = self.screen_w as f32 / 640.0;
+        let sy = self.screen_h as f32 / 480.0;
         self.curve_x =
-            (t * 0.23).sin() * 220.0 + (t * 0.51).sin() * 100.0 + (t * 0.89).sin() * 40.0;
-        self.curve_y = (t * 0.19).cos() * 180.0 + (t * 0.43).cos() * 80.0 + (t * 0.71).cos() * 30.0;
+            ((t * 0.23).sin() * 220.0 + (t * 0.51).sin() * 100.0 + (t * 0.89).sin() * 40.0) * sx;
+        self.curve_y =
+            ((t * 0.19).cos() * 180.0 + (t * 0.43).cos() * 80.0 + (t * 0.71).cos() * 30.0) * sy;
     }
 }
 

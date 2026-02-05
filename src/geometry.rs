@@ -412,3 +412,67 @@ pub fn rect_polygon_collision(
 
     None
 }
+
+/// Check if a circle collides with a polygon.
+/// Returns (normal_x, normal_y, penetration_depth) pointing from polygon toward circle center.
+/// Penetration depth is exactly how far the circle overlaps — pushing by this amount resolves it.
+pub fn circle_polygon_collision(
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    vertices: &[(f32, f32)],
+) -> Option<(f32, f32, f32)> {
+    let n = vertices.len();
+    if n < 3 {
+        return None;
+    }
+
+    // If circle center is inside the polygon, use escape vector
+    if point_in_polygon(cx, cy, vertices) {
+        if let Some((nx, ny, dist)) = polygon_escape_vector(cx, cy, vertices) {
+            return Some((nx, ny, dist + radius));
+        }
+    }
+
+    // Find closest point on any polygon edge to circle center
+    let mut closest_dist = f32::MAX;
+    let mut closest_nx = 0.0_f32;
+    let mut closest_ny = 0.0_f32;
+
+    for i in 0..n {
+        let (x1, y1) = vertices[i];
+        let (x2, y2) = vertices[(i + 1) % n];
+
+        let ex = x2 - x1;
+        let ey = y2 - y1;
+        let len_sq = ex * ex + ey * ey;
+        if len_sq < 0.001 {
+            continue;
+        }
+
+        // Project center onto edge segment, clamped
+        let t = ((cx - x1) * ex + (cy - y1) * ey) / len_sq;
+        let t = t.clamp(0.0, 1.0);
+
+        let near_x = x1 + t * ex;
+        let near_y = y1 + t * ey;
+
+        let dx = cx - near_x;
+        let dy = cy - near_y;
+        let dist = (dx * dx + dy * dy).sqrt();
+
+        if dist < closest_dist {
+            closest_dist = dist;
+            if dist > 0.001 {
+                closest_nx = dx / dist;
+                closest_ny = dy / dist;
+            }
+        }
+    }
+
+    if closest_dist < radius {
+        Some((closest_nx, closest_ny, radius - closest_dist))
+    } else {
+        None
+    }
+}

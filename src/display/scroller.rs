@@ -177,6 +177,20 @@ impl Scroller {
     /// Set screen width (call this when buffer size changes)
     pub fn set_screen_width(&mut self, width: u32) {
         self.screen_width = width;
+        // Clamp position so scrollers don't start beyond the actual screen edge
+        match self.direction {
+            ScrollDirection::Leftward => {
+                if self.x > width as f32 {
+                    self.x = width as f32;
+                }
+            },
+            ScrollDirection::Rightward => {
+                let text_w = self.text_pixel_width() as f32;
+                if self.x < -text_w {
+                    self.x = -text_w;
+                }
+            },
+        }
     }
 
     /// Render the scroller at the given Y position

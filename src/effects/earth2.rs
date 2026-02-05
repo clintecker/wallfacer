@@ -8,7 +8,7 @@ use std::f32::consts::{PI, TAU};
 
 use super::Effect;
 use crate::display::PixelBuffer;
-use crate::geometry::{rect_polygon_collision, reflect};
+use crate::geometry::{circle_polygon_collision, reflect};
 use crate::math3d::{project, Mesh, Vec3};
 use crate::regions::Scene;
 use crate::texture::Texture;
@@ -370,23 +370,22 @@ impl Effect for Earth2 {
             self.pos_y = new_y;
         }
 
-        // Polygon region collision (bounding square around globe)
-        let side = visual_radius * 2.0;
+        // Polygon region collision (circle around globe center)
         for region in &scene.regions {
             let verts = region.polygon.as_tuples();
-            if let Some((nx, ny, dist)) = rect_polygon_collision(
-                self.pos_x - visual_radius,
-                self.pos_y - visual_radius,
-                side,
-                side,
-                &verts,
-            ) {
-                let (new_vx, new_vy) = reflect(self.vel_x, self.vel_y, nx, ny);
-                self.vel_x = new_vx;
-                self.vel_y = new_vy;
-                let push_dist = dist + 10.0;
-                self.pos_x += nx * push_dist;
-                self.pos_y += ny * push_dist;
+            if let Some((nx, ny, penetration)) =
+                circle_polygon_collision(self.pos_x, self.pos_y, visual_radius, &verts)
+            {
+                // Only reflect if moving INTO the region (prevents oscillation)
+                let dot = self.vel_x * nx + self.vel_y * ny;
+                if dot < 0.0 {
+                    let (new_vx, new_vy) = reflect(self.vel_x, self.vel_y, nx, ny);
+                    self.vel_x = new_vx;
+                    self.vel_y = new_vy;
+                }
+                // Push exactly clear of overlap + small margin
+                self.pos_x += nx * (penetration + 1.0);
+                self.pos_y += ny * (penetration + 1.0);
                 break;
             }
         }
