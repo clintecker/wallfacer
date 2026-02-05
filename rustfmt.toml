@@ -1,0 +1,27 @@
+# Rustfmt Configuration
+# =====================
+# Professional formatting standards for wallfacer
+# Only stable options to avoid nightly dependency
+
+edition = "2021"
+
+# Line width
+max_width = 100
+use_small_heuristics = "Default"
+
+# Imports
+reorder_imports = true
+reorder_modules = true
+
+# Functions
+fn_params_layout = "Tall"
+
+# Match
+match_arm_leading_pipes = "Never"
+match_block_trailing_comma = true
+
+# Misc
+newline_style = "Unix"
+remove_nested_parens = true
+use_field_init_shorthand = true
+use_try_shorthand = true

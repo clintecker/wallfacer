@@ -1,0 +1,30 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+coverage/
+
+# Scene files (user-specific calibration data)
+scene.json
+scenes/*.json
+!scenes/.gitkeep
+
+# Logs
+*.log
+
+# Local development
+.env
+.env.local

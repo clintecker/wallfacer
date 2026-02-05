@@ -1,0 +1,10 @@
+# macOS - homebrew SDL2 library path
+[target.aarch64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]
+
+# Raspberry Pi cross-compilation target
+[target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"

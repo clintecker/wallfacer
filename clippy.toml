@@ -1,0 +1,30 @@
+# Clippy Configuration
+# ====================
+# Linting standards for wallfacer
+
+# Cognitive complexity threshold
+cognitive-complexity-threshold = 25
+
+# Too many arguments threshold
+too-many-arguments-threshold = 7
+
+# Too many lines threshold
+too-many-lines-threshold = 150
+
+# Type complexity threshold
+type-complexity-threshold = 250
+
+# Allowed wildcard imports (for prelude-style modules)
+allowed-wildcard-imports = []
+
+# Disallowed names (avoid placeholder names)
+disallowed-names = ["foo", "bar", "baz", "quux", "temp", "tmp"]
+
+# Documentation requirements
+missing-docs-in-crate-items = false
+
+# MSRV - Minimum Supported Rust Version
+msrv = "1.75.0"
+
+# Avoid large stack allocations (threshold in bytes)
+stack-size-threshold = 512000

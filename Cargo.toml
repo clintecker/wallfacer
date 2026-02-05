@@ -1,0 +1,94 @@
+[package]
+name = "wallfacer"
+version = "0.1.0"
+edition = "2021"
+authors = ["wallfacer contributors"]
+description = "High-performance projection mapping and demoscene effects for Raspberry Pi"
+license = "MIT"
+repository = "https://github.com/wallfacer/wallfacer"
+readme = "README.md"
+keywords = ["graphics", "demoscene", "raspberry-pi", "projection-mapping"]
+categories = ["graphics", "multimedia", "rendering"]
+rust-version = "1.75"
+
+[dependencies]
+sdl2 = "0.37"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1  # Faster dev builds with some optimization
+
+# ============================================================================
+# Lints Configuration
+# ============================================================================
+# Centralized lint configuration - applies to all tools (cargo check, clippy)
+# This is the professional way to manage lints in modern Rust
+
+[lints.rust]
+unsafe_code = "allow"  # Intentional unsafe for performance-critical graphics
+missing_docs = "allow" # Enable later when stabilizing API
+
+[lints.clippy]
+# Enable lint groups with lower priority so individual lints can override
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Deny dangerous patterns
+unwrap_used = "allow"                     # Used in SDL2 initialization and setup
+expect_used = "warn"
+
+# Allow pragmatic exceptions for graphics/demoscene code
+many_single_char_names = "allow"          # x, y, r, g, b are idiomatic
+similar_names = "allow"                   # x0, x1, y0, y1 are clear
+unreadable_literal = "allow"              # Magic numbers in demoscene code
+cast_precision_loss = "allow"             # Intentional f32 <-> i32 conversions
+cast_possible_truncation = "allow"        # Intentional for pixel math
+cast_sign_loss = "allow"                  # Intentional for coordinates
+cast_possible_wrap = "allow"              # Controlled in graphics context
+cast_lossless = "allow"                   # Explicit casts for clarity
+suboptimal_flops = "allow"                # Clarity over micro-optimization
+items_after_statements = "allow"          # Flexible code organization
+too_many_lines = "allow"                  # Complex effects need space
+cognitive_complexity = "allow"            # Render loops are inherently complex
+too_many_arguments = "allow"              # Graphics APIs have many params
+module_name_repetitions = "allow"         # region::Region is fine
+must_use_candidate = "allow"              # Not all methods need #[must_use]
+missing_errors_doc = "allow"              # Documentation comes later
+missing_panics_doc = "allow"              # Documentation comes later
+redundant_pub_crate = "allow"             # Explicit visibility is clearer
+significant_drop_tightening = "allow"     # False positives with SDL2
+missing_const_for_fn = "allow"            # Evolving API
+trivially_copy_pass_by_ref = "allow"      # Consistency in method signatures
+use_self = "allow"                        # Explicit type names are clearer
+unused_self = "allow"                     # Future-proofing method signatures
+doc_markdown = "allow"                    # Relaxed doc formatting
+uninlined_format_args = "allow"           # Both styles acceptable
+imprecise_flops = "allow"                 # Performance over precision in graphics
+match_wildcard_for_single_variants = "allow" # Cleaner exhaustive matches
+unnecessary_literal_bound = "allow"       # &str vs &'static str flexibility
+struct_field_names = "allow"              # Field names matching struct name are clear
+float_cmp = "allow"                       # Exact float comparison used intentionally
+excessive_precision = "allow"             # Precise constants in graphics math
+cloned_instead_of_copied = "allow"        # Explicit .clone() for clarity
+manual_range_contains = "allow"           # Direct comparisons can be clearer
+cast_ptr_alignment = "allow"              # Controlled in unsafe pixel buffer code
+ptr_as_ptr = "allow"                      # Pointer casts in unsafe graphics code
+single_match_else = "allow"              # Match with else can be clearer than if-let
+while_float = "allow"                     # Float loops used in procedural generation
+disallowed_names = "allow"                # temp, foo, bar used as meaningful names
+wildcard_imports = "allow"                # Glob imports for effect modules
+suspicious_operation_groupings = "allow"  # Intentional math expressions in graphics
+if_same_then_else = "allow"              # Intentional identical branches for clarity
+match_same_arms = "allow"                 # Default-matching patterns
+assign_op_pattern = "allow"              # Both styles acceptable
+unnecessary_cast = "allow"               # Explicit casts for clarity
+used_underscore_binding = "allow"        # Underscore bindings used intentionally
+no_effect_underscore_binding = "allow"   # Prefixed vars kept for documentation
