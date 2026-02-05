@@ -2,7 +2,8 @@
 //!
 //! Wolfenstein-style first-person auto-walk through a procedurally generated maze.
 //! DDA grid-stepping raycaster, procedural brick texture, distance fog,
-//! and robust auto-navigation using raycasts for pathfinding.
+//! and look-ahead auto-navigation using raycasts for pathfinding.
+//! Includes debug minimap overlay showing navigation rays.
 
 use super::Effect;
 use crate::display::PixelBuffer;
@@ -12,6 +13,19 @@ use crate::util::Rng;
 
 const MAP_SIZE: usize = 16;
 const TEX_SIZE: u32 = 64;
+const MINIMAP_CELL: i32 = 6;
+const MINIMAP_MARGIN: i32 = 4;
+
+/// Debug ray for minimap visualization
+struct DebugRay {
+    start_x: f32,
+    start_y: f32,
+    angle: f32,
+    dist: f32,
+    r: u8,
+    g: u8,
+    b: u8,
+}
 
 /// Wolfenstein-style raycaster with procedural maze
 pub struct Raycaster {
@@ -21,11 +35,11 @@ pub struct Raycaster {
     player_y: f32,
     player_angle: f32,
     target_angle: f32,
-    /// Locks turn direction until the current turn completes (prevents oscillation)
     turning: bool,
     move_speed: f32,
     wall_texture: Texture,
     rng: Rng,
+    debug_rays: Vec<DebugRay>,
 }
 
 impl Raycaster {
@@ -34,10 +48,7 @@ impl Raycaster {
         let map = generate_maze(&mut rng);
         let wall_texture = build_brick_texture();
 
-        // Find a good starting position: open cell with space around it
         let (sx, sy) = find_open_cell(&map);
-
-        // Find initial angle pointing down the longest corridor
         let start_angle = find_open_direction(&map, sx, sy);
 
         Self {
@@ -51,6 +62,7 @@ impl Raycaster {
             move_speed: 1.5,
             wall_texture,
             rng,
+            debug_rays: Vec::new(),
         }
     }
 
@@ -61,13 +73,13 @@ impl Raycaster {
         self.map[y as usize * MAP_SIZE + x as usize] == 1
     }
 
-    /// Cast a ray and return the perpendicular distance to the first wall
-    fn cast_ray(&self, angle: f32) -> f32 {
+    /// Cast a ray from an arbitrary position and return the distance to the first wall
+    fn cast_ray_from(&self, start_x: f32, start_y: f32, angle: f32) -> f32 {
         let ray_cos = angle.cos();
         let ray_sin = angle.sin();
 
-        let mut map_x = self.player_x as i32;
-        let mut map_y = self.player_y as i32;
+        let mut map_x = start_x as i32;
+        let mut map_y = start_y as i32;
 
         let delta_dist_x = if ray_cos == 0.0 {
             f32::MAX
@@ -81,14 +93,14 @@ impl Raycaster {
         };
 
         let (step_x, mut side_dist_x) = if ray_cos < 0.0 {
-            (-1, (self.player_x - map_x as f32) * delta_dist_x)
+            (-1, (start_x - map_x as f32) * delta_dist_x)
         } else {
-            (1, (map_x as f32 + 1.0 - self.player_x) * delta_dist_x)
+            (1, (map_x as f32 + 1.0 - start_x) * delta_dist_x)
         };
         let (step_y, mut side_dist_y) = if ray_sin < 0.0 {
-            (-1, (self.player_y - map_y as f32) * delta_dist_y)
+            (-1, (start_y - map_y as f32) * delta_dist_y)
         } else {
-            (1, (map_y as f32 + 1.0 - self.player_y) * delta_dist_y)
+            (1, (map_y as f32 + 1.0 - start_y) * delta_dist_y)
         };
 
         let mut hit_side;
@@ -105,13 +117,64 @@ impl Raycaster {
 
             if self.is_wall(map_x, map_y) {
                 return if hit_side == 0 {
-                    (map_x as f32 - self.player_x + (1 - step_x) as f32 * 0.5) / ray_cos
+                    (map_x as f32 - start_x + (1 - step_x) as f32 * 0.5) / ray_cos
                 } else {
-                    (map_y as f32 - self.player_y + (1 - step_y) as f32 * 0.5) / ray_sin
+                    (map_y as f32 - start_y + (1 - step_y) as f32 * 0.5) / ray_sin
                 };
             }
         }
         f32::MAX
+    }
+
+    /// Cast a ray from the player's current position
+    fn cast_ray(&self, angle: f32) -> f32 {
+        self.cast_ray_from(self.player_x, self.player_y, angle)
+    }
+
+    /// Draw debug minimap overlay showing maze, player, and navigation rays
+    fn draw_minimap(&self, buffer: &mut PixelBuffer) {
+        let ox = MINIMAP_MARGIN;
+        let oy = MINIMAP_MARGIN;
+
+        // Draw maze grid
+        for my in 0..MAP_SIZE as i32 {
+            for mx in 0..MAP_SIZE as i32 {
+                let is_wall = self.map[my as usize * MAP_SIZE + mx as usize] == 1;
+                let (r, g, b) = if is_wall { (50, 50, 70) } else { (12, 12, 20) };
+                let px = ox + mx * MINIMAP_CELL;
+                let py = oy + my * MINIMAP_CELL;
+                buffer.fill_rect(px, py, MINIMAP_CELL as u32, MINIMAP_CELL as u32, r, g, b);
+            }
+        }
+
+        // Draw debug rays
+        for ray in &self.debug_rays {
+            let sx = ox + (ray.start_x * MINIMAP_CELL as f32) as i32;
+            let sy = oy + (ray.start_y * MINIMAP_CELL as f32) as i32;
+            let clamped_dist = ray.dist.min(10.0);
+            let ex =
+                ox + ((ray.start_x + ray.angle.cos() * clamped_dist) * MINIMAP_CELL as f32) as i32;
+            let ey =
+                oy + ((ray.start_y + ray.angle.sin() * clamped_dist) * MINIMAP_CELL as f32) as i32;
+            buffer.line(sx, sy, ex, ey, ray.r, ray.g, ray.b);
+        }
+
+        // Draw player dot
+        let px = ox + (self.player_x * MINIMAP_CELL as f32) as i32;
+        let py = oy + (self.player_y * MINIMAP_CELL as f32) as i32;
+        for dy in -1..=1_i32 {
+            for dx in -1..=1_i32 {
+                buffer.set_pixel(px + dx, py + dy, 0, 255, 0);
+            }
+        }
+
+        // Draw player direction arrow
+        let dir_len = 2.5;
+        let dx =
+            ox + ((self.player_x + self.player_angle.cos() * dir_len) * MINIMAP_CELL as f32) as i32;
+        let dy =
+            oy + ((self.player_y + self.player_angle.sin() * dir_len) * MINIMAP_CELL as f32) as i32;
+        buffer.line(px, py, dx, dy, 255, 255, 255);
     }
 }
 
@@ -123,7 +186,6 @@ impl Default for Raycaster {
 
 /// Find an open cell that's in a corridor (has open neighbors)
 fn find_open_cell(map: &[u8]) -> (usize, usize) {
-    // Find a cell that has the most open neighbors (intersection or corridor middle)
     let mut best = (1, 1);
     let mut best_score = 0;
 
@@ -157,10 +219,10 @@ fn find_open_cell(map: &[u8]) -> (usize, usize) {
 /// Find the direction with the most open space from a cell
 fn find_open_direction(map: &[u8], cx: usize, cy: usize) -> f32 {
     let dirs: [(i32, i32, f32); 4] = [
-        (1, 0, 0.0),                           // east
-        (0, 1, std::f32::consts::FRAC_PI_2),   // south
-        (-1, 0, std::f32::consts::PI),         // west
-        (0, -1, -std::f32::consts::FRAC_PI_2), // north
+        (1, 0, 0.0),
+        (0, 1, std::f32::consts::FRAC_PI_2),
+        (-1, 0, std::f32::consts::PI),
+        (0, -1, -std::f32::consts::FRAC_PI_2),
     ];
 
     let mut best_angle = 0.0_f32;
@@ -265,7 +327,6 @@ fn build_brick_texture() -> Texture {
                 let brick_id = ((y / brick_h) * 13 + ((x + offset) / brick_w) * 29) & 0xFF;
                 let base = 130 + (brick_id & 0x3F) as u16;
                 let v = base.min(255) as u8;
-                // Warm brick tint
                 let r = v;
                 let g = (v as f32 * 0.75) as u8;
                 let b = (v as f32 * 0.55) as u8;
@@ -280,7 +341,7 @@ impl Effect for Raycaster {
     fn update(&mut self, dt: f32, _width: u32, _height: u32, _scene: &Scene) {
         self.time += dt;
 
-        use std::f32::consts::{FRAC_PI_2, PI, TAU};
+        use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 
         // Check if current turn is complete
         let mut angle_diff = self.target_angle - self.player_angle;
@@ -296,24 +357,135 @@ impl Effect for Raycaster {
             self.turning = false;
         }
 
-        // Only evaluate new navigation decisions when NOT mid-turn
-        if !self.turning {
-            let fwd_dist = self.cast_ray(self.player_angle);
-            let left_dist = self.cast_ray(self.player_angle - FRAC_PI_2);
-            let right_dist = self.cast_ray(self.player_angle + FRAC_PI_2);
+        // Cast navigation rays and store for debug minimap
+        self.debug_rays.clear();
 
-            if fwd_dist < 1.8 {
-                // Wall ahead — pick a direction and COMMIT
-                if left_dist > right_dist {
-                    self.target_angle = self.player_angle - FRAC_PI_2;
-                } else if right_dist > left_dist {
-                    self.target_angle = self.player_angle + FRAC_PI_2;
+        let fwd_dist = self.cast_ray(self.player_angle);
+        let left_dist = self.cast_ray(self.player_angle - FRAC_PI_2);
+        let right_dist = self.cast_ray(self.player_angle + FRAC_PI_2);
+        let left_45 = self.cast_ray(self.player_angle - FRAC_PI_4);
+        let right_45 = self.cast_ray(self.player_angle + FRAC_PI_4);
+
+        // Forward ray (green)
+        self.debug_rays.push(DebugRay {
+            start_x: self.player_x,
+            start_y: self.player_y,
+            angle: self.player_angle,
+            dist: fwd_dist,
+            r: 0,
+            g: 200,
+            b: 0,
+        });
+        // Side rays (yellow)
+        self.debug_rays.push(DebugRay {
+            start_x: self.player_x,
+            start_y: self.player_y,
+            angle: self.player_angle - FRAC_PI_2,
+            dist: left_dist,
+            r: 200,
+            g: 200,
+            b: 0,
+        });
+        self.debug_rays.push(DebugRay {
+            start_x: self.player_x,
+            start_y: self.player_y,
+            angle: self.player_angle + FRAC_PI_2,
+            dist: right_dist,
+            r: 200,
+            g: 200,
+            b: 0,
+        });
+        // Diagonal rays (magenta)
+        self.debug_rays.push(DebugRay {
+            start_x: self.player_x,
+            start_y: self.player_y,
+            angle: self.player_angle - FRAC_PI_4,
+            dist: left_45,
+            r: 150,
+            g: 0,
+            b: 150,
+        });
+        self.debug_rays.push(DebugRay {
+            start_x: self.player_x,
+            start_y: self.player_y,
+            angle: self.player_angle + FRAC_PI_4,
+            dist: right_45,
+            r: 150,
+            g: 0,
+            b: 150,
+        });
+
+        // Look-ahead: project near the wall ahead and cast side rays from there
+        // This detects side corridors at T-junctions before we reach them
+        let look_ahead_dist = (fwd_dist - 0.5).clamp(0.1, 3.0);
+        let ahead_x = self.player_x + self.player_angle.cos() * look_ahead_dist;
+        let ahead_y = self.player_y + self.player_angle.sin() * look_ahead_dist;
+
+        let ahead_left = self.cast_ray_from(ahead_x, ahead_y, self.player_angle - FRAC_PI_2);
+        let ahead_right = self.cast_ray_from(ahead_x, ahead_y, self.player_angle + FRAC_PI_2);
+
+        // Look-ahead rays (cyan)
+        self.debug_rays.push(DebugRay {
+            start_x: ahead_x,
+            start_y: ahead_y,
+            angle: self.player_angle - FRAC_PI_2,
+            dist: ahead_left,
+            r: 0,
+            g: 200,
+            b: 255,
+        });
+        self.debug_rays.push(DebugRay {
+            start_x: ahead_x,
+            start_y: ahead_y,
+            angle: self.player_angle + FRAC_PI_2,
+            dist: ahead_right,
+            r: 0,
+            g: 200,
+            b: 255,
+        });
+
+        // Navigation decisions (only when NOT mid-turn)
+        if !self.turning {
+            if fwd_dist < 1.5 {
+                // Approaching a wall — use look-ahead rays to detect side corridors
+                // at the junction point ahead, not just from current position
+                let (mut best_dist, mut best_turn) = if ahead_right > ahead_left {
+                    (ahead_right, FRAC_PI_2)
+                } else if ahead_left > 0.0 {
+                    (ahead_left, -FRAC_PI_2)
                 } else {
+                    (0.0_f32, PI) // dead end: U-turn
+                };
+
+                // Diagonals can spot corridors too
+                if left_45 > best_dist * 0.8 && left_45 > 2.0 {
+                    best_dist = left_45;
+                    best_turn = -FRAC_PI_2;
+                }
+                if right_45 > best_dist * 0.8 && right_45 > 2.0 {
+                    best_dist = right_45;
+                    best_turn = FRAC_PI_2;
+                }
+
+                if best_dist < 0.8 {
                     self.target_angle = self.player_angle + PI;
+                } else {
+                    self.target_angle = self.player_angle + best_turn;
                 }
                 self.turning = true;
+
+                // Chosen direction (bright red)
+                self.debug_rays.push(DebugRay {
+                    start_x: self.player_x,
+                    start_y: self.player_y,
+                    angle: self.target_angle,
+                    dist: 3.0,
+                    r: 255,
+                    g: 50,
+                    b: 50,
+                });
             } else {
-                // Occasionally explore side corridors
+                // Open corridor — occasionally explore side corridors
                 if fwd_dist > 3.0 && self.rng.next_f32() < 0.005 {
                     if left_dist > 2.5 && self.rng.next_f32() < 0.5 {
                         self.target_angle = self.player_angle - FRAC_PI_2;
@@ -373,7 +545,7 @@ impl Effect for Raycaster {
         let h = buffer.height() as i32;
         let half_h = h as f32 / 2.0;
         let pixels = buffer.as_bytes_mut();
-        let fov = std::f32::consts::FRAC_PI_3; // 60 degrees
+        let fov = std::f32::consts::FRAC_PI_3;
         let tex_w = self.wall_texture.width() as f32;
         let tex_h = self.wall_texture.height() as f32;
 
@@ -429,7 +601,6 @@ impl Effect for Raycaster {
                 }
             }
 
-            // Perpendicular distance (avoids fisheye)
             let perp_dist = if !hit {
                 f32::MAX
             } else if hit_side == 0 {
@@ -447,7 +618,6 @@ impl Effect for Raycaster {
             let draw_start = ((half_h - wall_h / 2.0) as i32).max(0);
             let draw_end = ((half_h + wall_h / 2.0) as i32).min(h);
 
-            // Texture X coordinate
             let wall_x = if hit_side == 0 {
                 self.player_y + perp_dist * ray_sin
             } else {
@@ -456,13 +626,10 @@ impl Effect for Raycaster {
             let wall_x = wall_x - wall_x.floor();
             let tex_x = (wall_x * tex_w) as u32 % self.wall_texture.width();
 
-            // N/S vs E/W brightness
             let side_dim: f32 = if hit_side == 1 { 0.7 } else { 1.0 };
-
-            // Distance fog
             let fog = (1.0 - (perp_dist / 10.0).min(1.0)).max(0.05) * side_dim;
 
-            // Draw ceiling — dark blue gradient
+            // Ceiling
             for row in 0..draw_start {
                 let idx = (row * w + col) as usize * 4;
                 let t = 1.0 - (row as f32 / half_h);
@@ -475,7 +642,7 @@ impl Effect for Raycaster {
                 pixels[idx + 3] = cr;
             }
 
-            // Draw wall stripe
+            // Wall stripe
             for row in draw_start..draw_end {
                 let idx = (row * w + col) as usize * 4;
                 let d = (row as f32 - half_h + wall_h / 2.0) / wall_h;
@@ -491,7 +658,7 @@ impl Effect for Raycaster {
                 pixels[idx + 3] = (tr as f32 * fog) as u8;
             }
 
-            // Draw floor — dark gradient
+            // Floor
             for row in draw_end..h {
                 let idx = (row * w + col) as usize * 4;
                 let t = (row as f32 - half_h) / half_h;
@@ -502,6 +669,9 @@ impl Effect for Raycaster {
                 pixels[idx + 3] = c;
             }
         }
+
+        // Debug minimap overlay
+        self.draw_minimap(buffer);
     }
 
     fn name(&self) -> &str {
