@@ -46,7 +46,9 @@ impl MqttClient {
         let host = if host.is_empty() { DEFAULT_HOST } else { host };
         let topic = if topic.is_empty() { DEFAULT_TOPIC } else { topic };
 
-        let mut options = MqttOptions::new("wallfacer", host, DEFAULT_PORT);
+        // Use unique client ID to allow multiple instances (local dev + production)
+        let client_id = format!("wallfacer-{}", std::process::id());
+        let mut options = MqttOptions::new(client_id, host, DEFAULT_PORT);
         options.set_keep_alive(Duration::from_secs(30));
 
         let (client, mut connection) = Client::new(options, 10);
