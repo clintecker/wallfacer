@@ -179,6 +179,28 @@ impl Effect for GravityBalls {
             // Slowly rotate hue
             ball.hue = (ball.hue + dt * 30.0) % 360.0;
         }
+
+        // Check average activity - reset balls if too slow
+        let avg_speed: f32 = self
+            .balls
+            .iter()
+            .map(|b| (b.vx * b.vx + b.vy * b.vy).sqrt())
+            .sum::<f32>()
+            / self.balls.len() as f32;
+
+        const MIN_ACTIVITY: f32 = 30.0; // Minimum average speed threshold
+        if avg_speed < MIN_ACTIVITY {
+            // Reset half the balls with fresh energy
+            let num_to_reset = self.balls.len() / 2;
+            for ball in self.balls.iter_mut().take(num_to_reset) {
+                // Launch from random position near top
+                ball.x = self.rng.next_f32() * w;
+                ball.y = self.rng.next_f32() * h * 0.3; // Top 30%
+                ball.vx = (self.rng.next_f32() - 0.5) * 300.0;
+                ball.vy = self.rng.next_f32() * 100.0; // Downward
+                ball.trail.clear();
+            }
+        }
     }
 
     fn render(&self, buffer: &mut PixelBuffer) {

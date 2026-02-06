@@ -60,6 +60,77 @@ fn mask_regions(buffer: &mut PixelBuffer, scene: &Scene, color: (u8, u8, u8)) {
     }
 }
 
+/// Draw glowing effect around user-defined regions (excludes chyron regions)
+fn glow_regions(buffer: &mut PixelBuffer, scene: &Scene, time: f32) {
+    use regions::Shape;
+
+    // Pulsing glow intensity
+    let pulse = (time * 3.0).sin() * 0.3 + 0.7; // 0.4 to 1.0
+    let base_alpha = (180.0 * pulse) as u8;
+
+    for region in &scene.regions {
+        // Skip chyron regions
+        if region.name.starts_with("chyron") {
+            continue;
+        }
+
+        match region.get_shape() {
+            Shape::Polygon(poly) => {
+                let verts = poly.as_tuples();
+                // Draw multiple layers for glow effect (outer to inner)
+                for layer in (1..=5).rev() {
+                    let alpha = base_alpha / (layer as u8 + 1);
+                    // Expand polygon for outer glow
+                    let expanded = expand_polygon(&verts, layer as f32 * 3.0);
+                    buffer.fill_polygon_blend(&expanded, 100, 200, 255, alpha);
+                }
+                // Inner fill with glow
+                buffer.fill_polygon_blend(&verts, 50, 150, 255, base_alpha / 2);
+            }
+            Shape::Circle(circle) => {
+                let cx = circle.center.x as i32;
+                let cy = circle.center.y as i32;
+                let r = circle.radius as i32;
+                // Draw multiple layers for glow effect
+                for layer in (1..=5).rev() {
+                    let alpha = base_alpha / (layer as u8 + 1);
+                    let glow_r = r + layer * 3;
+                    buffer.fill_circle_blend(cx, cy, glow_r, 100, 200, 255, alpha);
+                }
+                // Inner fill
+                buffer.fill_circle_blend(cx, cy, r, 50, 150, 255, base_alpha / 2);
+            }
+        }
+    }
+}
+
+/// Expand a polygon outward by a given amount (simple approximation)
+fn expand_polygon(verts: &[(f32, f32)], amount: f32) -> Vec<(f32, f32)> {
+    if verts.len() < 3 {
+        return verts.to_vec();
+    }
+
+    // Calculate centroid
+    let (cx, cy) = verts.iter().fold((0.0, 0.0), |(sx, sy), &(x, y)| (sx + x, sy + y));
+    let n = verts.len() as f32;
+    let (cx, cy) = (cx / n, cy / n);
+
+    // Move each vertex away from centroid
+    verts
+        .iter()
+        .map(|&(x, y)| {
+            let dx = x - cx;
+            let dy = y - cy;
+            let len = (dx * dx + dy * dy).sqrt();
+            if len > 0.001 {
+                (x + dx / len * amount, y + dy / len * amount)
+            } else {
+                (x, y)
+            }
+        })
+        .collect()
+}
+
 /// Create a scene with virtual chyron regions added for effect bouncing
 /// The chyron regions are horizontal strips at top and bottom of screen
 fn scene_with_chyron_regions(base_scene: &Scene, width: u32, height: u32) -> Scene {
@@ -375,6 +446,7 @@ fn main() -> Result<(), String> {
     let sample_count = if benchmark_seconds.is_some() { 100_000 } else { 60 };
     let mut fps_counter = FpsCounter::new(sample_count);
     let mut show_fps = false;
+    let mut region_glow = false; // G to enable, H to disable
     let mut total_elapsed = 0.0f32;
 
     // Load scene or create new
@@ -648,6 +720,16 @@ fn main() -> Result<(), String> {
                         show_fps = !show_fps;
                         continue;
                     },
+                    Keycode::G => {
+                        region_glow = true;
+                        eprintln!("Region glow: ON");
+                        continue;
+                    },
+                    Keycode::H => {
+                        region_glow = false;
+                        eprintln!("Region glow: OFF");
+                        continue;
+                    },
                     Keycode::Delete | Keycode::Backspace => {
                         if mode == AppMode::Calibration {
                             calibration.delete_selected();
@@ -884,7 +966,12 @@ fn main() -> Result<(), String> {
         chyron_bottom.render(&mut buffer, start_y + text_offset);
 
         // Mask user-defined regions AFTER chyron render (so they appear on top)
-        mask_regions(&mut buffer, calibration.scene(), region_color);
+        // If glow mode is enabled (G key), draw glowing effect instead
+        if region_glow {
+            glow_regions(&mut buffer, calibration.scene(), total_elapsed);
+        } else {
+            mask_regions(&mut buffer, calibration.scene(), region_color);
+        }
 
         if mode == AppMode::Calibration {
             // Dim the effect a bit more for visibility
