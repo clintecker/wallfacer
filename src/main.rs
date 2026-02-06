@@ -744,6 +744,10 @@ fn main() -> Result<(), String> {
                     },
                     Keycode::LShift | Keycode::RShift => {
                         shift_held = true;
+                        // Forward to calibration so it knows shift is held for circle drawing
+                        if mode == AppMode::Calibration {
+                            calibration.handle_event(&event);
+                        }
                         continue;
                     },
                     Keycode::Left => {
@@ -814,6 +818,10 @@ fn main() -> Result<(), String> {
             if let InputEvent::KeyUp(key) = &event {
                 if *key == Keycode::LShift || *key == Keycode::RShift {
                     shift_held = false;
+                    // Forward to calibration so it knows shift was released
+                    if mode == AppMode::Calibration {
+                        calibration.handle_event(&event);
+                    }
                 }
             }
 
