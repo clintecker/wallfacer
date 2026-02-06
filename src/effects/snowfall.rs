@@ -23,9 +23,9 @@ const GUST_MIN_STRENGTH: f32 = 60.0;    // Mild gust
 const GUST_MAX_STRENGTH: f32 = 180.0;   // Extreme gust (blizzard-like)
 
 // Melt settings
-const MELT_BASE_INTERVAL: f32 = 6.0;    // Base melt tick interval
-const MELT_VARIATION: f32 = 4.0;        // +/- variation from base (sinusoidal)
-const MELT_CYCLE_PERIOD: f32 = 45.0;    // Full melt rate cycle (slow/fast phases)
+const MELT_BASE_INTERVAL: f32 = 3.5;    // Base melt tick interval (faster)
+const MELT_VARIATION: f32 = 2.0;        // +/- variation from base (sinusoidal)
+const MELT_CYCLE_PERIOD: f32 = 35.0;    // Full melt rate cycle (slow/fast phases)
 const MELT_AMOUNT: i32 = 1;
 
 struct Flake {
