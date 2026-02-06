@@ -833,9 +833,11 @@ fn main() -> Result<(), String> {
             }
         }
 
-        // Update chyron positions
-        chyron_top.update(dt);
-        chyron_bottom.update(dt);
+        // Update chyron positions (pause in calibration mode like effects)
+        if mode == AppMode::Effect {
+            chyron_top.update(dt);
+            chyron_bottom.update(dt);
+        }
 
         // Create scene with virtual chyron regions so effects bounce off them
         let effect_scene = scene_with_chyron_regions(calibration.scene(), width, height);
