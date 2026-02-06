@@ -1,0 +1,17 @@
+[Unit]
+Description=Wallfacer demoscene effects and projection mapping
+After=network.target graphical.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=mapper
+Group=mapper
+WorkingDirectory=/home/mapper/wallfacer
+Environment=DISPLAY=:0
+ExecStart=/home/mapper/wallfacer/target/release/wallfacer
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target
