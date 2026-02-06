@@ -1,17 +1,24 @@
 [Unit]
 Description=Wallfacer demoscene effects and projection mapping
-After=network.target graphical.target
-Wants=graphical.target
+After=multi-user.target
 
 [Service]
 Type=simple
 User=mapper
 Group=mapper
 WorkingDirectory=/home/mapper/wallfacer
-Environment=DISPLAY=:0
+# Use KMSDRM for direct rendering without X
+Environment=SDL_VIDEODRIVER=kmsdrm
+# Grant access to DRM devices
+SupplementaryGroups=video render
 ExecStart=/home/mapper/wallfacer/target/release/wallfacer
 Restart=always
 RestartSec=5
+# Need TTY access for direct rendering
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
