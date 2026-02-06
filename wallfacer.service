@@ -8,6 +8,7 @@ Type=simple
 User=root
 WorkingDirectory=/home/mapper/wallfacer
 Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=SDL_KMSDRM_DEVICE=/dev/dri/card1
 Environment=HOME=/home/mapper
 ExecStart=/home/mapper/wallfacer/target/release/wallfacer
 Restart=always
