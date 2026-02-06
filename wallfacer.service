@@ -1,7 +1,6 @@
 [Unit]
 Description=Wallfacer demoscene effects and projection mapping
 After=multi-user.target
-Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
@@ -10,6 +9,8 @@ WorkingDirectory=/home/mapper/wallfacer
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=SDL_KMSDRM_DEVICE=/dev/dri/card1
 Environment=HOME=/home/mapper
+# Stop getty on tty1 to release display before starting
+ExecStartPre=/bin/systemctl stop getty@tty1.service
 ExecStart=/home/mapper/wallfacer/target/release/wallfacer -r 640x480
 Restart=always
 RestartSec=5
