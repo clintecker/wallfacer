@@ -96,9 +96,9 @@ impl Snowfall {
         self.region_snow = vec![0; w];
 
         // For each region, scan columns to find top and bottom of region surface
-        // Skip chyron regions - they're virtual boundaries, not physical surfaces
+        // Skip top chyron (would catch all snow), but allow bottom chyron as a surface
         for region in &scene.regions {
-            if region.name.starts_with("chyron") {
+            if region.name == "chyron_top" {
                 continue;
             }
             let shape = region.get_shape();
