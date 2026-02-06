@@ -5,6 +5,7 @@
 
 use super::Effect;
 use crate::display::PixelBuffer;
+use crate::geometry::circle_polygon_collision;
 use crate::regions::{Scene, Shape};
 use crate::util::Rng;
 
@@ -138,11 +139,19 @@ impl Effect for GravityBalls {
             for region in &scene.regions {
                 match region.get_shape() {
                     Shape::Polygon(poly) => {
-                        // Simple check: if center is inside polygon, push out
-                        if poly.contains(ball.x, ball.y) {
-                            // Reflect velocity based on entry direction
-                            ball.vy = -ball.vy.abs() * BOUNCE_DAMPING;
-                            ball.y -= ball.radius;
+                        // Check circle-polygon collision with proper normal
+                        let verts = poly.as_tuples();
+                        if let Some((nx, ny, penetration)) =
+                            circle_polygon_collision(ball.x, ball.y, ball.radius, &verts)
+                        {
+                            // Push ball out along normal
+                            ball.x += nx * (penetration + 1.0);
+                            ball.y += ny * (penetration + 1.0);
+
+                            // Reflect velocity off the surface normal
+                            let dot = ball.vx * nx + ball.vy * ny;
+                            ball.vx = (ball.vx - 2.0 * dot * nx) * BOUNCE_DAMPING;
+                            ball.vy = (ball.vy - 2.0 * dot * ny) * BOUNCE_DAMPING;
                         }
                     }
                     Shape::Circle(circle) => {
