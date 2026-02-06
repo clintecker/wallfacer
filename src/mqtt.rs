@@ -4,6 +4,7 @@
 //! Messages received are forwarded to the main loop for display.
 
 use rumqttc::{Client, Event, MqttOptions, Packet, QoS};
+use serde::Deserialize;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::Duration;
@@ -11,10 +12,30 @@ use std::time::Duration;
 const DEFAULT_HOST: &str = "192.168.23.123";
 const DEFAULT_PORT: u16 = 1883;
 const DEFAULT_TOPIC: &str = "wallfacer";
+const DEFAULT_TTL: f32 = 60.0;
+
+/// A chyron message with text and time-to-live
+#[derive(Debug, Clone)]
+pub struct ChyronMessage {
+    pub text: String,
+    pub ttl: f32,
+}
+
+/// JSON format for incoming messages (optional)
+#[derive(Deserialize)]
+struct JsonMessage {
+    text: String,
+    #[serde(default = "default_ttl")]
+    ttl: f32,
+}
+
+fn default_ttl() -> f32 {
+    DEFAULT_TTL
+}
 
 /// MQTT client that receives messages in a background thread
 pub struct MqttClient {
-    receiver: Receiver<String>,
+    receiver: Receiver<ChyronMessage>,
     _thread: thread::JoinHandle<()>,
 }
 
@@ -70,7 +91,7 @@ impl MqttClient {
 
     fn message_loop(
         mut connection: rumqttc::Connection,
-        sender: Sender<String>,
+        sender: Sender<ChyronMessage>,
         topic: &str,
     ) {
         for event in connection.iter() {
@@ -78,9 +99,21 @@ impl MqttClient {
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
                     if publish.topic == topic {
                         if let Ok(text) = String::from_utf8(publish.payload.to_vec()) {
-                            let text = text.trim().to_string();
+                            let text = text.trim();
                             if !text.is_empty() {
-                                if sender.send(text).is_err() {
+                                // Try to parse as JSON, fall back to plain text
+                                let msg = if let Ok(json) = serde_json::from_str::<JsonMessage>(text) {
+                                    ChyronMessage {
+                                        text: json.text,
+                                        ttl: json.ttl,
+                                    }
+                                } else {
+                                    ChyronMessage {
+                                        text: text.to_string(),
+                                        ttl: DEFAULT_TTL,
+                                    }
+                                };
+                                if sender.send(msg).is_err() {
                                     // Main thread gone, exit
                                     break;
                                 }
@@ -99,7 +132,7 @@ impl MqttClient {
 
     /// Poll for the latest message (non-blocking).
     /// Returns the most recent message if any arrived, discarding older ones.
-    pub fn poll(&self) -> Option<String> {
+    pub fn poll(&self) -> Option<ChyronMessage> {
         let mut latest = None;
         while let Ok(msg) = self.receiver.try_recv() {
             latest = Some(msg);

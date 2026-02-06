@@ -424,10 +424,52 @@ fn main() -> Result<(), String> {
     // MQTT client for chyron messages (fail fast if can't connect)
     let mqtt_client = MqttClient::new(&mqtt_host, &mqtt_topic)?;
 
-    // Chyron scrollers - start as None, activate on first MQTT message
-    // Top: scrolls right to left, Bottom: scrolls left to right
-    let mut chyron_top: Option<StyledScroller> = None;
-    let mut chyron_bottom: Option<StyledScroller> = None;
+    // Default chyron text
+    const DEFAULT_CHYRON: &str = "2389 RESEARCH LLC";
+
+    // Helper to create chyron scrollers with consistent styling
+    let create_chyrons = |text: &str, w: u32, h: u32| -> (StyledScroller, StyledScroller) {
+        // Scale everything relative to buffer size (reference: 640x480, reduced 40%)
+        let scale = (h / 100).max(1);
+        let speed = w as f32 * 0.1;
+        let orbital_radius = h as f32 * 0.02;
+
+        let mut top = StyledScroller::new(text)
+            .direction(ScrollDirection::Leftward)
+            .speed(speed)
+            .scale(scale)
+            .offset(OffsetEffect::Circle {
+                radius: orbital_radius,
+                speed: 3.0,
+            })
+            .color_fx(ColorEffect::Gradient {
+                start: (255, 100, 255),
+                end: (100, 255, 255),
+            });
+        top.set_screen_width(w);
+
+        let mut bottom = StyledScroller::new(text)
+            .direction(ScrollDirection::Rightward)
+            .speed(speed)
+            .scale(scale)
+            .offset(OffsetEffect::Circle {
+                radius: orbital_radius,
+                speed: 3.0,
+            })
+            .color_fx(ColorEffect::Gradient {
+                start: (255, 100, 255),
+                end: (100, 255, 255),
+            });
+        bottom.set_screen_width(w);
+
+        (top, bottom)
+    };
+
+    // Initialize chyrons with default text
+    let (mut chyron_top, mut chyron_bottom) = create_chyrons(DEFAULT_CHYRON, width, height);
+
+    // Track override message expiry (None = showing default)
+    let mut chyron_override_expires: Option<f32> = None;
 
     // Get effect name for benchmark output
     let effect_name = match current_effect {
@@ -732,51 +774,28 @@ fn main() -> Result<(), String> {
 
         // Poll MQTT for chyron messages
         if let Some(msg) = mqtt_client.poll() {
-            // Scale everything relative to buffer size (reference: 640x480, reduced 40%)
-            let scale = (height / 100).max(1);
-            let speed = width as f32 * 0.1;
-            let orbital_radius = height as f32 * 0.02;
+            // Set override text with expiry time
+            let (top, bottom) = create_chyrons(&msg.text, width, height);
+            chyron_top = top;
+            chyron_bottom = bottom;
+            chyron_override_expires = Some(total_elapsed + msg.ttl);
+            eprintln!("Chyron override: '{}' for {}s", msg.text, msg.ttl);
+        }
 
-            // Top chyron: scrolls right to left
-            let mut top = StyledScroller::new(&msg)
-                .direction(ScrollDirection::Leftward)
-                .speed(speed)
-                .scale(scale)
-                .offset(OffsetEffect::Circle {
-                    radius: orbital_radius,
-                    speed: 3.0,
-                })
-                .color_fx(ColorEffect::Gradient {
-                    start: (255, 100, 255),
-                    end: (100, 255, 255),
-                });
-            top.set_screen_width(width);
-            chyron_top = Some(top);
-
-            // Bottom chyron: scrolls left to right
-            let mut bottom = StyledScroller::new(&msg)
-                .direction(ScrollDirection::Rightward)
-                .speed(speed)
-                .scale(scale)
-                .offset(OffsetEffect::Circle {
-                    radius: orbital_radius,
-                    speed: 3.0,
-                })
-                .color_fx(ColorEffect::Gradient {
-                    start: (255, 100, 255),
-                    end: (100, 255, 255),
-                });
-            bottom.set_screen_width(width);
-            chyron_bottom = Some(bottom);
+        // Check if override has expired, revert to default
+        if let Some(expires) = chyron_override_expires {
+            if total_elapsed >= expires {
+                let (top, bottom) = create_chyrons(DEFAULT_CHYRON, width, height);
+                chyron_top = top;
+                chyron_bottom = bottom;
+                chyron_override_expires = None;
+                eprintln!("Chyron reverted to default");
+            }
         }
 
         // Update chyron positions
-        if let Some(ref mut c) = chyron_top {
-            c.update(dt);
-        }
-        if let Some(ref mut c) = chyron_bottom {
-            c.update(dt);
-        }
+        chyron_top.update(dt);
+        chyron_bottom.update(dt);
 
         // Update and render current effect (or test pattern for unassigned slots)
         // Pause animation updates when in calibration mode
@@ -805,25 +824,21 @@ fn main() -> Result<(), String> {
         let text_offset = (height as f32 * 0.025) as i32;
 
         // Render top chyron (scrolls right to left)
-        if let Some(ref c) = chyron_top {
-            // Draw semi-transparent black background (alpha 200)
-            for y in 0..strip_height {
-                buffer.hline_blend(0, buffer.width() as i32 - 1, y, 0, 0, 0, 200);
-            }
-            // Render text with some vertical offset for orbital motion headroom
-            c.render(&mut buffer, text_offset);
+        // Draw semi-transparent black background (alpha 200)
+        for y in 0..strip_height {
+            buffer.hline_blend(0, buffer.width() as i32 - 1, y, 0, 0, 0, 200);
         }
+        // Render text with some vertical offset for orbital motion headroom
+        chyron_top.render(&mut buffer, text_offset);
 
         // Render bottom chyron (scrolls left to right)
-        if let Some(ref c) = chyron_bottom {
-            // Draw semi-transparent black background at bottom
-            let start_y = buffer.height() as i32 - strip_height;
-            for y in start_y..buffer.height() as i32 {
-                buffer.hline_blend(0, buffer.width() as i32 - 1, y, 0, 0, 0, 200);
-            }
-            // Render text
-            c.render(&mut buffer, start_y + text_offset);
+        // Draw semi-transparent black background at bottom
+        let start_y = buffer.height() as i32 - strip_height;
+        for y in start_y..buffer.height() as i32 {
+            buffer.hline_blend(0, buffer.width() as i32 - 1, y, 0, 0, 0, 200);
         }
+        // Render text
+        chyron_bottom.render(&mut buffer, start_y + text_offset);
 
         if mode == AppMode::Calibration {
             // Dim the effect a bit more for visibility
