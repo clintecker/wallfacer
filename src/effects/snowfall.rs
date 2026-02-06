@@ -7,15 +7,25 @@ use std::f32::consts::TAU;
 const MAX_FLAKES: usize = 3000;
 const TARGET_FLAKES: usize = 2000;
 const SPAWN_RATE: f32 = 300.0;
-const GROUND_SNOW_CAP: i32 = 200;  // Allow tall drifts (was 60)
-const REGION_SNOW_CAP: i32 = 100;  // Allow substantial buildup on regions (was 30)
+const GROUND_SNOW_CAP: i32 = 200;  // Allow tall drifts
+const REGION_SNOW_CAP: i32 = 100;  // Allow substantial buildup on regions
 /// Max height difference between adjacent columns before snow slides (1 = 45° angle of repose)
 const SLIDE_THRESHOLD: i32 = 1;
-const WIND_AMPLITUDE: f32 = 40.0;
-const WIND_PERIOD: f32 = 8.0;
-/// How often snow melts (seconds between melt ticks)
-const MELT_INTERVAL: f32 = 8.0;  // Slower melting (was 2.0)
-/// How much snow melts per tick
+
+// Wind settings
+const BASE_WIND_AMPLITUDE: f32 = 25.0;  // Gentle base breeze
+const BASE_WIND_PERIOD: f32 = 12.0;     // Slow base oscillation
+const GUST_MIN_INTERVAL: f32 = 3.0;     // Minimum seconds between gusts
+const GUST_MAX_INTERVAL: f32 = 12.0;    // Maximum seconds between gusts
+const GUST_MIN_DURATION: f32 = 2.0;     // Shortest gust
+const GUST_MAX_DURATION: f32 = 8.0;     // Longest sustained gust
+const GUST_MIN_STRENGTH: f32 = 60.0;    // Mild gust
+const GUST_MAX_STRENGTH: f32 = 180.0;   // Extreme gust (blizzard-like)
+
+// Melt settings
+const MELT_BASE_INTERVAL: f32 = 6.0;    // Base melt tick interval
+const MELT_VARIATION: f32 = 4.0;        // +/- variation from base (sinusoidal)
+const MELT_CYCLE_PERIOD: f32 = 45.0;    // Full melt rate cycle (slow/fast phases)
 const MELT_AMOUNT: i32 = 1;
 
 struct Flake {
@@ -48,6 +58,14 @@ pub struct Snowfall {
     screen_w: u32,
     screen_h: u32,
     scene_fingerprint: u64,
+
+    // Gust system
+    gust_timer: f32,       // Time until next gust starts (countdown)
+    gust_active: bool,     // Is a gust currently blowing?
+    gust_elapsed: f32,     // How long current gust has been active
+    gust_duration: f32,    // Total duration of current gust
+    gust_strength: f32,    // Strength of current gust (pixels/sec)
+    gust_direction: f32,   // 1.0 or -1.0
 }
 
 impl Snowfall {
@@ -78,6 +96,12 @@ impl Snowfall {
             screen_w: 0,
             screen_h: 0,
             scene_fingerprint: u64::MAX,
+            gust_timer: 5.0,  // First gust after 5 seconds
+            gust_active: false,
+            gust_elapsed: 0.0,
+            gust_duration: 0.0,
+            gust_strength: 0.0,
+            gust_direction: 1.0,
         }
     }
 
@@ -231,7 +255,49 @@ impl Effect for Snowfall {
         self.time += dt;
         let w = width as f32;
         let h_i = height as i32;
-        let wind = (self.time * TAU / WIND_PERIOD).sin() * WIND_AMPLITUDE;
+
+        // Update gust system
+        if self.gust_active {
+            self.gust_elapsed += dt;
+            if self.gust_elapsed >= self.gust_duration {
+                // Gust ended, schedule next one
+                self.gust_active = false;
+                self.gust_timer = self.rng.range_f32(GUST_MIN_INTERVAL, GUST_MAX_INTERVAL);
+            }
+        } else {
+            self.gust_timer -= dt;
+            if self.gust_timer <= 0.0 {
+                // Start a new gust
+                self.gust_active = true;
+                self.gust_elapsed = 0.0;
+                self.gust_duration = self.rng.range_f32(GUST_MIN_DURATION, GUST_MAX_DURATION);
+                self.gust_strength = self.rng.range_f32(GUST_MIN_STRENGTH, GUST_MAX_STRENGTH);
+                // Random direction with slight bias toward continuing previous direction
+                self.gust_direction = if self.rng.next_f32() < 0.6 {
+                    self.gust_direction
+                } else {
+                    -self.gust_direction
+                };
+            }
+        }
+
+        // Calculate wind: base breeze + gust (with smooth ramp in/out)
+        let base_wind = (self.time * TAU / BASE_WIND_PERIOD).sin() * BASE_WIND_AMPLITUDE;
+        let gust_wind = if self.gust_active {
+            // Smooth envelope: ramp up for first 20%, hold, ramp down for last 20%
+            let progress = self.gust_elapsed / self.gust_duration;
+            let envelope = if progress < 0.2 {
+                progress / 0.2  // Ramp up
+            } else if progress > 0.8 {
+                (1.0 - progress) / 0.2  // Ramp down
+            } else {
+                1.0  // Sustained
+            };
+            self.gust_strength * self.gust_direction * envelope
+        } else {
+            0.0
+        };
+        let wind = base_wind + gust_wind;
 
         // Pass 1: Move + Land
         let mut i = 0;
@@ -407,23 +473,34 @@ impl Effect for Snowfall {
             }
         }
 
-        // Pass 4: Melt - slowly reduce snow accumulation over time
+        // Pass 4: Melt - variable rate with sinusoidal slow/fast phases
+        // Melt interval varies: slower during "cold snaps", faster during "warm spells"
+        let melt_phase = (self.time * TAU / MELT_CYCLE_PERIOD).sin();
+        let current_melt_interval = MELT_BASE_INTERVAL + melt_phase * MELT_VARIATION;
+
         self.melt_timer += dt;
-        if self.melt_timer >= MELT_INTERVAL {
+        if self.melt_timer >= current_melt_interval {
             self.melt_timer = 0.0;
             let w_usize = width as usize;
+
+            // During fast melt phases (warm), melt extra sometimes
+            let melt_amount = if melt_phase > 0.5 && self.rng.next_f32() < 0.3 {
+                MELT_AMOUNT + 1  // Extra melt during warm spells
+            } else {
+                MELT_AMOUNT
+            };
 
             // Melt ground snow
             for x in 0..w_usize {
                 if self.ground_snow[x] > 0 {
-                    self.ground_snow[x] = (self.ground_snow[x] - MELT_AMOUNT).max(0);
+                    self.ground_snow[x] = (self.ground_snow[x] - melt_amount).max(0);
                 }
             }
 
             // Melt region snow
             for x in 0..w_usize {
                 if self.region_snow[x] > 0 {
-                    self.region_snow[x] = (self.region_snow[x] - MELT_AMOUNT).max(0);
+                    self.region_snow[x] = (self.region_snow[x] - melt_amount).max(0);
                 }
             }
         }
