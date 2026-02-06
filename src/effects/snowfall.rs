@@ -7,8 +7,8 @@ use std::f32::consts::TAU;
 const MAX_FLAKES: usize = 3000;
 const TARGET_FLAKES: usize = 2000;
 const SPAWN_RATE: f32 = 300.0;
-const GROUND_SNOW_CAP: i32 = 60;
-const REGION_SNOW_CAP: i32 = 30;
+const GROUND_SNOW_CAP: i32 = 200;  // Allow tall drifts (was 60)
+const REGION_SNOW_CAP: i32 = 100;  // Allow substantial buildup on regions (was 30)
 /// Max height difference between adjacent columns before snow slides (1 = 45° angle of repose)
 const SLIDE_THRESHOLD: i32 = 1;
 const WIND_AMPLITUDE: f32 = 40.0;
