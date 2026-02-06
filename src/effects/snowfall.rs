@@ -226,15 +226,16 @@ impl Effect for Snowfall {
             let col = f.x as usize;
             let fy = f.y as i32;
             let mut landed = false;
+            let w_usize = width as usize;
 
             if col < self.surface_top.len() {
-                // Accumulation amount scales with flake size
-                // size 1 = 1, size 2 = 2, size 3 = 2, size 4 = 3
-                let accumulation = match f.size {
-                    1 => 1,
-                    2 => 2,
-                    3 => 2,
-                    _ => 3, // size 4 (fluffy)
+                // Accumulation and spread based on flake size
+                // Bigger flakes create wider, taller snow deposits
+                let (center_acc, spread) = match f.size {
+                    1 => (1, 0),      // tiny: 1 height, no spread
+                    2 => (2, 1),      // small: 2 height, 1 col each side
+                    3 => (2, 1),      // medium: 2 height, 1 col each side
+                    _ => (3, 2),      // fluffy: 3 height, 2 cols each side
                 };
 
                 // Region surface check:
@@ -247,8 +248,25 @@ impl Effect for Snowfall {
                     let snow_surface = self.surface_top[col] - self.region_snow[col];
                     let region_bottom = self.surface_bot[col];
                     if fy >= snow_surface && fy <= region_bottom {
+                        // Add to center column
                         if self.region_snow[col] < cap {
-                            self.region_snow[col] = (self.region_snow[col] + accumulation).min(cap);
+                            self.region_snow[col] = (self.region_snow[col] + center_acc).min(cap);
+                        }
+                        // Spread to adjacent columns (smaller amount)
+                        for offset in 1..=spread {
+                            let side_acc = center_acc / (offset as i32 + 1); // diminishing
+                            if col >= offset {
+                                let left = col - offset;
+                                if self.surface_top[left] < h_i && self.snow_cap[left] > 0 {
+                                    self.region_snow[left] = (self.region_snow[left] + side_acc).min(self.snow_cap[left]);
+                                }
+                            }
+                            if col + offset < w_usize {
+                                let right = col + offset;
+                                if self.surface_top[right] < h_i && self.snow_cap[right] > 0 {
+                                    self.region_snow[right] = (self.region_snow[right] + side_acc).min(self.snow_cap[right]);
+                                }
+                            }
                         }
                         landed = true;
                     }
@@ -258,8 +276,21 @@ impl Effect for Snowfall {
                 if !landed {
                     let ground_top = (h_i - 1) - self.ground_snow[col];
                     if fy >= ground_top {
+                        // Add to center column
                         if self.ground_snow[col] < GROUND_SNOW_CAP {
-                            self.ground_snow[col] = (self.ground_snow[col] + accumulation).min(GROUND_SNOW_CAP);
+                            self.ground_snow[col] = (self.ground_snow[col] + center_acc).min(GROUND_SNOW_CAP);
+                        }
+                        // Spread to adjacent columns
+                        for offset in 1..=spread {
+                            let side_acc = center_acc / (offset as i32 + 1);
+                            if col >= offset {
+                                let left = col - offset;
+                                self.ground_snow[left] = (self.ground_snow[left] + side_acc).min(GROUND_SNOW_CAP);
+                            }
+                            if col + offset < w_usize {
+                                let right = col + offset;
+                                self.ground_snow[right] = (self.ground_snow[right] + side_acc).min(GROUND_SNOW_CAP);
+                            }
                         }
                         landed = true;
                     }
