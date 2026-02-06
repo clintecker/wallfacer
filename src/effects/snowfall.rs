@@ -14,7 +14,7 @@ const SLIDE_THRESHOLD: i32 = 1;
 const WIND_AMPLITUDE: f32 = 40.0;
 const WIND_PERIOD: f32 = 8.0;
 /// How often snow melts (seconds between melt ticks)
-const MELT_INTERVAL: f32 = 2.0;
+const MELT_INTERVAL: f32 = 8.0;  // Slower melting (was 2.0)
 /// How much snow melts per tick
 const MELT_AMOUNT: i32 = 1;
 
@@ -257,9 +257,9 @@ impl Effect for Snowfall {
                 // Bigger flakes create wider, taller snow deposits
                 let (center_acc, spread) = match f.size {
                     1 => (1, 0),      // tiny: 1 height, no spread
-                    2 => (2, 1),      // small: 2 height, 1 col each side
-                    3 => (2, 1),      // medium: 2 height, 1 col each side
-                    _ => (3, 2),      // fluffy: 3 height, 2 cols each side
+                    2 => (3, 1),      // small: 3 height, 1 col each side
+                    3 => (4, 2),      // medium: 4 height, 2 cols each side
+                    _ => (6, 3),      // fluffy: 6 height, 3 cols each side
                 };
 
                 // Region surface check:
