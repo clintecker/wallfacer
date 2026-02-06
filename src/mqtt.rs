@@ -123,9 +123,10 @@ impl MqttClient {
                     }
                 }
                 Ok(_) => {}
-                Err(e) => {
-                    eprintln!("MQTT error: {}", e);
-                    // Continue trying - connection may recover
+                Err(_) => {
+                    // Connection error - exit silently (broker may be down)
+                    // Don't spam logs with reconnection attempts
+                    break;
                 }
             }
         }

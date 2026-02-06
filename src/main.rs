@@ -28,7 +28,7 @@ use effects::{
 };
 use control::{Command, Controller};
 use input::CalibrationMode;
-use regions::Scene;
+use regions::{Point, Polygon, Region, Scene};
 use sdl2::keyboard::Keycode;
 use util::FpsCounter;
 
@@ -58,6 +58,38 @@ fn mask_regions(buffer: &mut PixelBuffer, scene: &Scene, color: (u8, u8, u8)) {
             }
         }
     }
+}
+
+/// Create a scene with virtual chyron regions added for effect bouncing
+/// The chyron regions are horizontal strips at top and bottom of screen
+fn scene_with_chyron_regions(base_scene: &Scene, width: u32, height: u32) -> Scene {
+    let mut scene = base_scene.clone();
+
+    // Calculate chyron strip height (same formula as rendering)
+    let strip_height = (height as f32 * 0.126) as f32;
+    let w = width as f32;
+    let h = height as f32;
+
+    // Top chyron region: rectangle from (0,0) to (width, strip_height)
+    let top_poly = Polygon::from_vertices(vec![
+        Point::new(0.0, 0.0),
+        Point::new(w, 0.0),
+        Point::new(w, strip_height),
+        Point::new(0.0, strip_height),
+    ]);
+    scene.add_region(Region::new("chyron_top", top_poly));
+
+    // Bottom chyron region: rectangle from (0, height-strip_height) to (width, height)
+    let bottom_y = h - strip_height;
+    let bottom_poly = Polygon::from_vertices(vec![
+        Point::new(0.0, bottom_y),
+        Point::new(w, bottom_y),
+        Point::new(w, h),
+        Point::new(0.0, h),
+    ]);
+    scene.add_region(Region::new("chyron_bottom", bottom_poly));
+
+    scene
 }
 
 /// Display rotation for portrait/landscape modes
@@ -421,8 +453,14 @@ fn main() -> Result<(), String> {
         eprintln!("Control socket: {}", Controller::socket_path());
     }
 
-    // MQTT client for chyron messages (fail fast if can't connect)
-    let mqtt_client = MqttClient::new(&mqtt_host, &mqtt_topic)?;
+    // MQTT client for chyron messages (optional - runs without if broker unavailable)
+    let mqtt_client = match MqttClient::new(&mqtt_host, &mqtt_topic) {
+        Ok(client) => Some(client),
+        Err(e) => {
+            eprintln!("MQTT: Not connected ({}) - running without chyron updates", e);
+            None
+        }
+    };
 
     // Default chyron text
     const DEFAULT_CHYRON: &str = "2389 RESEARCH LLC";
@@ -772,14 +810,16 @@ fn main() -> Result<(), String> {
             }
         }
 
-        // Poll MQTT for chyron messages
-        if let Some(msg) = mqtt_client.poll() {
-            // Set override text with expiry time
-            let (top, bottom) = create_chyrons(&msg.text, width, height);
-            chyron_top = top;
-            chyron_bottom = bottom;
-            chyron_override_expires = Some(total_elapsed + msg.ttl);
-            eprintln!("Chyron override: '{}' for {}s", msg.text, msg.ttl);
+        // Poll MQTT for chyron messages (if connected)
+        if let Some(ref client) = mqtt_client {
+            if let Some(msg) = client.poll() {
+                // Set override text with expiry time
+                let (top, bottom) = create_chyrons(&msg.text, width, height);
+                chyron_top = top;
+                chyron_bottom = bottom;
+                chyron_override_expires = Some(total_elapsed + msg.ttl);
+                eprintln!("Chyron override: '{}' for {}s", msg.text, msg.ttl);
+            }
         }
 
         // Check if override has expired, revert to default
@@ -797,27 +837,28 @@ fn main() -> Result<(), String> {
         chyron_top.update(dt);
         chyron_bottom.update(dt);
 
+        // Create scene with virtual chyron regions so effects bounce off them
+        let effect_scene = scene_with_chyron_regions(calibration.scene(), width, height);
+
         // Update and render current effect (or test pattern for unassigned slots)
         // Pause animation updates when in calibration mode
+        // Note: Pass effect_scene so effects bounce off chyron regions
         let region_color = match current_effect {
             Some(idx) => {
                 if mode == AppMode::Effect {
-                    effects[idx].update(dt, width, height, calibration.scene());
+                    effects[idx].update(dt, width, height, &effect_scene);
                 }
                 effects[idx].render(&mut buffer);
                 effects[idx].region_color()
             },
             None => {
                 if mode == AppMode::Effect {
-                    test_pattern.update(dt, width, height, calibration.scene());
+                    test_pattern.update(dt, width, height, &effect_scene);
                 }
                 test_pattern.render(&mut buffer);
                 test_pattern.region_color()
             },
         };
-
-        // Mask regions with the effect's custom color
-        mask_regions(&mut buffer, calibration.scene(), region_color);
 
         // Chyron dimensions scaled to buffer size (reference: 640x480, reduced 40%)
         let strip_height = (height as f32 * 0.126) as i32;
@@ -839,6 +880,9 @@ fn main() -> Result<(), String> {
         }
         // Render text
         chyron_bottom.render(&mut buffer, start_y + text_offset);
+
+        // Mask user-defined regions AFTER chyron render (so they appear on top)
+        mask_regions(&mut buffer, calibration.scene(), region_color);
 
         if mode == AppMode::Calibration {
             // Dim the effect a bit more for visibility
