@@ -13,6 +13,10 @@ const REGION_SNOW_CAP: i32 = 30;
 const SLIDE_THRESHOLD: i32 = 1;
 const WIND_AMPLITUDE: f32 = 40.0;
 const WIND_PERIOD: f32 = 8.0;
+/// How often snow melts (seconds between melt ticks)
+const MELT_INTERVAL: f32 = 2.0;
+/// How much snow melts per tick
+const MELT_AMOUNT: i32 = 1;
 
 struct Flake {
     x: f32,
@@ -34,10 +38,13 @@ pub struct Snowfall {
     region_snow: Vec<i32>,
     /// Per-column: max snow allowed (0 on steep/edge surfaces)
     snow_cap: Vec<i32>,
+    /// Per-column: true if ground is blocked by a region (no ground snow allowed)
+    ground_blocked: Vec<bool>,
 
     rng: Rng,
     time: f32,
     spawn_accum: f32,
+    melt_timer: f32,
     screen_w: u32,
     screen_h: u32,
     scene_fingerprint: u64,
@@ -63,9 +70,11 @@ impl Snowfall {
             ground_snow: Vec::new(),
             region_snow: Vec::new(),
             snow_cap: Vec::new(),
+            ground_blocked: Vec::new(),
             rng: Rng::new(0x5A0F),
             time: 0.0,
             spawn_accum: 0.0,
+            melt_timer: 0.0,
             screen_w: 0,
             screen_h: 0,
             scene_fingerprint: u64::MAX,
@@ -94,6 +103,7 @@ impl Snowfall {
         self.surface_bot = vec![h; w];
         self.ground_snow = vec![0; w];
         self.region_snow = vec![0; w];
+        self.ground_blocked = vec![false; w];
 
         // For each region, scan columns to find top and bottom of region surface
         // Skip top chyron (would catch all snow), but allow bottom chyron as a surface
@@ -159,6 +169,15 @@ impl Snowfall {
                 self.snow_cap[x] = REGION_SNOW_CAP / 4;
             }
             // else: steep or cliff edge — cap stays 0
+        }
+
+        // Mark ground as blocked where regions extend to screen bottom (like chyron_bottom)
+        // This prevents snow from accumulating on the invisible ground below such regions
+        let bottom_threshold = h - 10; // Region within 10px of screen bottom blocks ground
+        for x in 0..w {
+            if self.surface_bot[x] >= bottom_threshold {
+                self.ground_blocked[x] = true;
+            }
         }
 
         self.screen_w = width;
@@ -272,24 +291,28 @@ impl Effect for Snowfall {
                     }
                 }
 
-                // Ground check
-                if !landed {
+                // Ground check - skip if ground is blocked by a region (like chyron_bottom)
+                if !landed && !self.ground_blocked[col] {
                     let ground_top = (h_i - 1) - self.ground_snow[col];
                     if fy >= ground_top {
                         // Add to center column
                         if self.ground_snow[col] < GROUND_SNOW_CAP {
                             self.ground_snow[col] = (self.ground_snow[col] + center_acc).min(GROUND_SNOW_CAP);
                         }
-                        // Spread to adjacent columns
+                        // Spread to adjacent columns (only if not blocked)
                         for offset in 1..=spread {
                             let side_acc = center_acc / (offset as i32 + 1);
                             if col >= offset {
                                 let left = col - offset;
-                                self.ground_snow[left] = (self.ground_snow[left] + side_acc).min(GROUND_SNOW_CAP);
+                                if !self.ground_blocked[left] {
+                                    self.ground_snow[left] = (self.ground_snow[left] + side_acc).min(GROUND_SNOW_CAP);
+                                }
                             }
                             if col + offset < w_usize {
                                 let right = col + offset;
-                                self.ground_snow[right] = (self.ground_snow[right] + side_acc).min(GROUND_SNOW_CAP);
+                                if !self.ground_blocked[right] {
+                                    self.ground_snow[right] = (self.ground_snow[right] + side_acc).min(GROUND_SNOW_CAP);
+                                }
                             }
                         }
                         landed = true;
@@ -376,6 +399,27 @@ impl Effect for Snowfall {
             while self.spawn_accum >= 1.0 && self.active < MAX_FLAKES {
                 self.spawn_flake(width);
                 self.spawn_accum -= 1.0;
+            }
+        }
+
+        // Pass 4: Melt - slowly reduce snow accumulation over time
+        self.melt_timer += dt;
+        if self.melt_timer >= MELT_INTERVAL {
+            self.melt_timer = 0.0;
+            let w_usize = width as usize;
+
+            // Melt ground snow
+            for x in 0..w_usize {
+                if self.ground_snow[x] > 0 {
+                    self.ground_snow[x] = (self.ground_snow[x] - MELT_AMOUNT).max(0);
+                }
+            }
+
+            // Melt region snow
+            for x in 0..w_usize {
+                if self.region_snow[x] > 0 {
+                    self.region_snow[x] = (self.region_snow[x] - MELT_AMOUNT).max(0);
+                }
             }
         }
     }
