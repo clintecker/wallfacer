@@ -66,7 +66,7 @@ fn glow_regions(buffer: &mut PixelBuffer, scene: &Scene, time: f32) {
 
     // Pulsing glow intensity
     let pulse = (time * 3.0).sin() * 0.3 + 0.7; // 0.4 to 1.0
-    let base_alpha = (180.0 * pulse) as u8;
+    let glow_alpha = (200.0 * pulse) as u8;
 
     for region in &scene.regions {
         // Skip chyron regions
@@ -77,28 +77,34 @@ fn glow_regions(buffer: &mut PixelBuffer, scene: &Scene, time: f32) {
         match region.get_shape() {
             Shape::Polygon(poly) => {
                 let verts = poly.as_tuples();
-                // Draw multiple layers for glow effect (outer to inner)
+                // Draw outer glow layers (blended)
                 for layer in (1..=5).rev() {
-                    let alpha = base_alpha / (layer as u8 + 1);
-                    // Expand polygon for outer glow
-                    let expanded = expand_polygon(&verts, layer as f32 * 3.0);
-                    buffer.fill_polygon_blend(&expanded, 100, 200, 255, alpha);
+                    let alpha = glow_alpha / (layer as u8 + 1);
+                    let expanded = expand_polygon(&verts, layer as f32 * 4.0);
+                    buffer.fill_polygon_blend(&expanded, 80, 180, 255, alpha);
                 }
-                // Inner fill with glow
-                buffer.fill_polygon_blend(&verts, 50, 150, 255, base_alpha / 2);
+                // Solid inner fill (fully opaque, on top of everything)
+                let inner_pulse = ((time * 2.0).sin() * 0.2 + 0.8) as f32;
+                let r = (100.0 * inner_pulse) as u8;
+                let g = (180.0 * inner_pulse) as u8;
+                let b = 255;
+                buffer.fill_polygon(&verts, r, g, b);
             }
             Shape::Circle(circle) => {
                 let cx = circle.center.x as i32;
                 let cy = circle.center.y as i32;
                 let r = circle.radius as i32;
-                // Draw multiple layers for glow effect
+                // Draw outer glow layers (blended)
                 for layer in (1..=5).rev() {
-                    let alpha = base_alpha / (layer as u8 + 1);
-                    let glow_r = r + layer * 3;
-                    buffer.fill_circle_blend(cx, cy, glow_r, 100, 200, 255, alpha);
+                    let alpha = glow_alpha / (layer as u8 + 1);
+                    let glow_r = r + layer * 4;
+                    buffer.fill_circle_blend(cx, cy, glow_r, 80, 180, 255, alpha);
                 }
-                // Inner fill
-                buffer.fill_circle_blend(cx, cy, r, 50, 150, 255, base_alpha / 2);
+                // Solid inner fill (fully opaque)
+                let inner_pulse = ((time * 2.0).sin() * 0.2 + 0.8) as f32;
+                let cr = (100.0 * inner_pulse) as u8;
+                let cg = (180.0 * inner_pulse) as u8;
+                buffer.fill_circle(cx, cy, r, cr, cg, 255);
             }
         }
     }
