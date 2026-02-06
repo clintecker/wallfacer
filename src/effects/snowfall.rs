@@ -96,7 +96,11 @@ impl Snowfall {
         self.region_snow = vec![0; w];
 
         // For each region, scan columns to find top and bottom of region surface
+        // Skip chyron regions - they're virtual boundaries, not physical surfaces
         for region in &scene.regions {
+            if region.name.starts_with("chyron") {
+                continue;
+            }
             let shape = region.get_shape();
             if let Some((min_x, min_y, max_x, max_y)) = shape.bounds() {
                 let x0 = (min_x as i32).max(0) as usize;
@@ -224,6 +228,15 @@ impl Effect for Snowfall {
             let mut landed = false;
 
             if col < self.surface_top.len() {
+                // Accumulation amount scales with flake size
+                // size 1 = 1, size 2 = 2, size 3 = 2, size 4 = 3
+                let accumulation = match f.size {
+                    1 => 1,
+                    2 => 2,
+                    3 => 2,
+                    _ => 3, // size 4 (fluffy)
+                };
+
                 // Region surface check:
                 // Only land if (a) column allows accumulation, (b) flake is at/above
                 // the snow surface, and (c) flake is NOT below the region bottom
@@ -235,7 +248,7 @@ impl Effect for Snowfall {
                     let region_bottom = self.surface_bot[col];
                     if fy >= snow_surface && fy <= region_bottom {
                         if self.region_snow[col] < cap {
-                            self.region_snow[col] += 1;
+                            self.region_snow[col] = (self.region_snow[col] + accumulation).min(cap);
                         }
                         landed = true;
                     }
@@ -246,7 +259,7 @@ impl Effect for Snowfall {
                     let ground_top = (h_i - 1) - self.ground_snow[col];
                     if fy >= ground_top {
                         if self.ground_snow[col] < GROUND_SNOW_CAP {
-                            self.ground_snow[col] += 1;
+                            self.ground_snow[col] = (self.ground_snow[col] + accumulation).min(GROUND_SNOW_CAP);
                         }
                         landed = true;
                     }

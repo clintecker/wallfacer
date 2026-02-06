@@ -23,6 +23,9 @@ pub struct Dvd {
     logo_height: u32,
     logo_scale: u32,
     trail: Vec<(f32, f32, f32)>, // (x, y, hue) for trail effect
+    // Anti-stuck: track rapid region bounces
+    region_bounce_cooldown: f32,  // Time until we allow region collision again
+    rapid_bounce_count: u32,      // Count of rapid bounces (resets when cooldown expires)
 }
 
 impl Dvd {
@@ -41,6 +44,8 @@ impl Dvd {
             logo_height,
             logo_scale,
             trail: Vec::with_capacity(20),
+            region_bounce_cooldown: 0.0,
+            rapid_bounce_count: 0,
         }
     }
 
@@ -165,18 +170,44 @@ impl Effect for Dvd {
             self.y = new_y;
         }
 
-        // Region collision (polygons and circles)
-        if let Some((nx, ny, dist)) = self.check_region_collision(scene) {
-            let (new_vx, new_vy) = reflect(self.vx, self.vy, nx, ny);
-            self.vx = new_vx;
-            self.vy = new_vy;
+        // Update region bounce cooldown
+        if self.region_bounce_cooldown > 0.0 {
+            self.region_bounce_cooldown -= dt;
+            if self.region_bounce_cooldown <= 0.0 {
+                // Cooldown expired, reset rapid bounce counter
+                self.rapid_bounce_count = 0;
+            }
+        }
 
-            // Push out of polygon: distance to edge + margin
-            let push_dist = dist + 10.0;
-            self.x += nx * push_dist;
-            self.y += ny * push_dist;
+        // Region collision (polygons and circles) - skip if in cooldown
+        if self.region_bounce_cooldown <= 0.0 {
+            if let Some((nx, ny, dist)) = self.check_region_collision(scene) {
+                let (new_vx, new_vy) = reflect(self.vx, self.vy, nx, ny);
+                self.vx = new_vx;
+                self.vy = new_vy;
 
-            bounced = true;
+                // Track rapid bounces - if bouncing too fast, we're probably stuck
+                self.rapid_bounce_count += 1;
+
+                // Base push distance, increases with rapid bounce count to escape corners
+                let escape_multiplier = 1.0 + (self.rapid_bounce_count as f32 * 0.5);
+                let push_dist = (dist + 15.0) * escape_multiplier;
+                self.x += nx * push_dist;
+                self.y += ny * push_dist;
+
+                // Set cooldown - longer if we're bouncing rapidly (stuck)
+                let base_cooldown = 0.05; // 50ms minimum between region bounces
+                self.region_bounce_cooldown = base_cooldown * escape_multiplier;
+
+                // If bouncing very rapidly (4+ times), add velocity boost to escape
+                if self.rapid_bounce_count >= 4 {
+                    let speed_boost = 1.2;
+                    self.vx *= speed_boost;
+                    self.vy *= speed_boost;
+                }
+
+                bounced = true;
+            }
         }
 
         if bounced {
