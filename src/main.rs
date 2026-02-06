@@ -5,6 +5,7 @@
 mod control;
 mod display;
 mod effects;
+mod mqtt;
 mod geometry;
 mod input;
 mod math3d;
@@ -15,8 +16,10 @@ mod texture;
 mod util;
 
 use display::{
-    draw_text, Display, InputEvent, PixelBuffer, RenderTarget, DEFAULT_HEIGHT, DEFAULT_WIDTH,
+    draw_text, ColorEffect, Display, InputEvent, OffsetEffect, PixelBuffer, RenderTarget,
+    ScrollDirection, StyledScroller, DEFAULT_HEIGHT, DEFAULT_WIDTH,
 };
+use mqtt::MqttClient;
 use effects::{
     Bobs, CopperBars, DotTunnel, Dvd, Earth, Earth2, Effect, EtherealInk, Fire, Glenz,
     GravityBalls, Julia, LavaRegions, Metaballs, Plasma, Raycaster, RegionFire, Ripples,
@@ -174,6 +177,8 @@ struct AppOptions {
     rotation: Rotation,
     benchmark_seconds: Option<f32>,
     scene_file: Option<String>,
+    mqtt_host: String,
+    mqtt_topic: String,
 }
 
 /// Parse command line arguments
@@ -187,6 +192,8 @@ fn parse_args() -> AppOptions {
         rotation: Rotation::None,
         benchmark_seconds: None,
         scene_file: None,
+        mqtt_host: MqttClient::default_host().to_string(),
+        mqtt_topic: MqttClient::default_topic().to_string(),
     };
 
     let mut i = 1;
@@ -259,6 +266,18 @@ fn parse_args() -> AppOptions {
                     i += 1;
                 }
             },
+            "--mqtt-host" => {
+                if i + 1 < args.len() {
+                    opts.mqtt_host = args[i + 1].clone();
+                    i += 1;
+                }
+            },
+            "--mqtt-topic" => {
+                if i + 1 < args.len() {
+                    opts.mqtt_topic = args[i + 1].clone();
+                    i += 1;
+                }
+            },
             "--help" => {
                 println!("Usage: wallfacer [OPTIONS]");
                 println!();
@@ -277,6 +296,14 @@ fn parse_args() -> AppOptions {
                 println!("  --benchmark [S], -b   Run benchmark for S seconds (default: 10)");
                 println!("  --scene FILE, -s      Load scene/regions from FILE");
                 println!("  --no-vsync            Disable VSync for uncapped framerate");
+                println!(
+                    "  --mqtt-host HOST      MQTT broker address (default: {})",
+                    MqttClient::default_host()
+                );
+                println!(
+                    "  --mqtt-topic TOPIC    MQTT topic for chyron (default: {})",
+                    MqttClient::default_topic()
+                );
                 println!("  --help                Show this help message");
                 std::process::exit(0);
             },
@@ -297,6 +324,8 @@ fn main() -> Result<(), String> {
     let rotation = opts.rotation;
     let benchmark_seconds = opts.benchmark_seconds;
     let scene_file = opts.scene_file;
+    let mqtt_host = opts.mqtt_host;
+    let mqtt_topic = opts.mqtt_topic;
 
     // For 90/270 rotation, the window dimensions are swapped
     let (window_w, window_h) = match rotation {
@@ -391,6 +420,14 @@ fn main() -> Result<(), String> {
     if controller.is_some() {
         eprintln!("Control socket: {}", Controller::socket_path());
     }
+
+    // MQTT client for chyron messages (fail fast if can't connect)
+    let mqtt_client = MqttClient::new(&mqtt_host, &mqtt_topic)?;
+
+    // Chyron scrollers - start as None, activate on first MQTT message
+    // Top: scrolls right to left, Bottom: scrolls left to right
+    let mut chyron_top: Option<StyledScroller> = None;
+    let mut chyron_bottom: Option<StyledScroller> = None;
 
     // Get effect name for benchmark output
     let effect_name = match current_effect {
@@ -693,6 +730,54 @@ fn main() -> Result<(), String> {
             }
         }
 
+        // Poll MQTT for chyron messages
+        if let Some(msg) = mqtt_client.poll() {
+            // Scale everything relative to buffer size (reference: 640x480, reduced 40%)
+            let scale = (height / 100).max(1);
+            let speed = width as f32 * 0.1;
+            let orbital_radius = height as f32 * 0.02;
+
+            // Top chyron: scrolls right to left
+            let mut top = StyledScroller::new(&msg)
+                .direction(ScrollDirection::Leftward)
+                .speed(speed)
+                .scale(scale)
+                .offset(OffsetEffect::Circle {
+                    radius: orbital_radius,
+                    speed: 3.0,
+                })
+                .color_fx(ColorEffect::Gradient {
+                    start: (255, 100, 255),
+                    end: (100, 255, 255),
+                });
+            top.set_screen_width(width);
+            chyron_top = Some(top);
+
+            // Bottom chyron: scrolls left to right
+            let mut bottom = StyledScroller::new(&msg)
+                .direction(ScrollDirection::Rightward)
+                .speed(speed)
+                .scale(scale)
+                .offset(OffsetEffect::Circle {
+                    radius: orbital_radius,
+                    speed: 3.0,
+                })
+                .color_fx(ColorEffect::Gradient {
+                    start: (255, 100, 255),
+                    end: (100, 255, 255),
+                });
+            bottom.set_screen_width(width);
+            chyron_bottom = Some(bottom);
+        }
+
+        // Update chyron positions
+        if let Some(ref mut c) = chyron_top {
+            c.update(dt);
+        }
+        if let Some(ref mut c) = chyron_bottom {
+            c.update(dt);
+        }
+
         // Update and render current effect (or test pattern for unassigned slots)
         // Pause animation updates when in calibration mode
         let region_color = match current_effect {
@@ -714,6 +799,31 @@ fn main() -> Result<(), String> {
 
         // Mask regions with the effect's custom color
         mask_regions(&mut buffer, calibration.scene(), region_color);
+
+        // Chyron dimensions scaled to buffer size (reference: 640x480, reduced 40%)
+        let strip_height = (height as f32 * 0.126) as i32;
+        let text_offset = (height as f32 * 0.025) as i32;
+
+        // Render top chyron (scrolls right to left)
+        if let Some(ref c) = chyron_top {
+            // Draw semi-transparent black background (alpha 200)
+            for y in 0..strip_height {
+                buffer.hline_blend(0, buffer.width() as i32 - 1, y, 0, 0, 0, 200);
+            }
+            // Render text with some vertical offset for orbital motion headroom
+            c.render(&mut buffer, text_offset);
+        }
+
+        // Render bottom chyron (scrolls left to right)
+        if let Some(ref c) = chyron_bottom {
+            // Draw semi-transparent black background at bottom
+            let start_y = buffer.height() as i32 - strip_height;
+            for y in start_y..buffer.height() as i32 {
+                buffer.hline_blend(0, buffer.width() as i32 - 1, y, 0, 0, 0, 200);
+            }
+            // Render text
+            c.render(&mut buffer, start_y + text_offset);
+        }
 
         if mode == AppMode::Calibration {
             // Dim the effect a bit more for visibility

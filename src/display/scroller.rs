@@ -142,16 +142,16 @@ impl Scroller {
                 match self.direction {
                     ScrollDirection::Leftward => {
                         self.x -= self.speed * dt;
-                        // Seamless wrap using modulo
+                        // Wrap: when text exits left, reset to right edge
                         if self.x < -text_w {
-                            self.x = self.x % text_w;
+                            self.x = width;
                         }
                     },
                     ScrollDirection::Rightward => {
                         self.x += self.speed * dt;
-                        // Seamless wrap using modulo
+                        // Wrap: when text exits right, reset to left edge
                         if self.x > width {
-                            self.x = self.x % text_w - text_w;
+                            self.x = -text_w;
                         }
                     },
                 }
