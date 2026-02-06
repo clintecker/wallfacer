@@ -10,7 +10,7 @@ WorkingDirectory=/home/mapper/wallfacer
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=SDL_KMSDRM_DEVICE=/dev/dri/card1
 Environment=HOME=/home/mapper
-ExecStart=/home/mapper/wallfacer/target/release/wallfacer -r 800x600
+ExecStart=/home/mapper/wallfacer/target/release/wallfacer -r 640x480
 Restart=always
 RestartSec=5
 
