@@ -105,7 +105,21 @@ impl Snowfall {
         self.region_snow = vec![0; w];
         self.ground_blocked = vec![false; w];
 
-        // For each region, scan columns to find top and bottom of region surface
+        // First pass: mark columns blocked by chyron_bottom (always blocks ground)
+        for region in &scene.regions {
+            if region.name == "chyron_bottom" {
+                let shape = region.get_shape();
+                if let Some((min_x, _, max_x, _)) = shape.bounds() {
+                    let x0 = (min_x as i32).max(0) as usize;
+                    let x1 = ((max_x as i32) + 1).min(width as i32) as usize;
+                    for col in x0..x1 {
+                        self.ground_blocked[col] = true;
+                    }
+                }
+            }
+        }
+
+        // Second pass: find region surfaces for snow accumulation
         // Skip top chyron (would catch all snow), but allow bottom chyron as a surface
         for region in &scene.regions {
             if region.name == "chyron_top" {
@@ -169,15 +183,6 @@ impl Snowfall {
                 self.snow_cap[x] = REGION_SNOW_CAP / 4;
             }
             // else: steep or cliff edge — cap stays 0
-        }
-
-        // Mark ground as blocked where regions extend to screen bottom (like chyron_bottom)
-        // This prevents snow from accumulating on the invisible ground below such regions
-        let bottom_threshold = h - 10; // Region within 10px of screen bottom blocks ground
-        for x in 0..w {
-            if self.surface_bot[x] >= bottom_threshold {
-                self.ground_blocked[x] = true;
-            }
         }
 
         self.screen_w = width;

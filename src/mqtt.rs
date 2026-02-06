@@ -96,13 +96,12 @@ impl MqttClient {
         sender: Sender<ChyronMessage>,
         topic: &str,
     ) {
-        let mut consecutive_errors = 0;
-        const MAX_CONSECUTIVE_ERRORS: u32 = 50; // Allow many errors before giving up
+        let mut total_errors = 0u32;
+        let mut last_error_log = std::time::Instant::now();
 
         for event in connection.iter() {
             match event {
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
-                    consecutive_errors = 0; // Reset on successful event
                     if publish.topic == topic {
                         if let Ok(raw) = String::from_utf8(publish.payload.to_vec()) {
                             let raw = raw.trim();
@@ -129,20 +128,17 @@ impl MqttClient {
                     }
                 }
                 Ok(_) => {
-                    consecutive_errors = 0; // Reset on any successful event
+                    // Other events (pings, etc) - just continue
                 }
                 Err(e) => {
-                    consecutive_errors += 1;
-                    // Only log occasionally to avoid spam
-                    if consecutive_errors == 1 || consecutive_errors % 10 == 0 {
-                        eprintln!("MQTT: Connection error ({}): {:?}", consecutive_errors, e);
+                    total_errors += 1;
+                    // Only log errors every 30 seconds to avoid spam
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_error_log).as_secs() >= 30 {
+                        eprintln!("MQTT: {} errors, latest: {:?}", total_errors, e);
+                        last_error_log = now;
                     }
-                    // Give up only after many consecutive errors
-                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                        eprintln!("MQTT: Too many errors, giving up");
-                        break;
-                    }
-                    // Small delay before continuing to avoid tight error loop
+                    // Small delay before continuing
                     std::thread::sleep(Duration::from_millis(100));
                 }
             }
