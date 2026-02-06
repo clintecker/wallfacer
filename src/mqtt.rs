@@ -98,24 +98,25 @@ impl MqttClient {
             match event {
                 Ok(Event::Incoming(Packet::Publish(publish))) => {
                     if publish.topic == topic {
-                        if let Ok(text) = String::from_utf8(publish.payload.to_vec()) {
-                            let text = text.trim();
-                            if !text.is_empty() {
-                                // Try to parse as JSON, fall back to plain text
-                                let msg = if let Ok(json) = serde_json::from_str::<JsonMessage>(text) {
-                                    ChyronMessage {
-                                        text: json.text,
-                                        ttl: json.ttl,
+                        if let Ok(raw) = String::from_utf8(publish.payload.to_vec()) {
+                            let raw = raw.trim();
+                            if !raw.is_empty() {
+                                // Require JSON format: {"text": "message", "ttl": 30}
+                                match serde_json::from_str::<JsonMessage>(raw) {
+                                    Ok(json) => {
+                                        let msg = ChyronMessage {
+                                            text: json.text,
+                                            ttl: json.ttl,
+                                        };
+                                        eprintln!("MQTT: Received '{}' (TTL: {}s)", msg.text, msg.ttl);
+                                        if sender.send(msg).is_err() {
+                                            // Main thread gone, exit
+                                            break;
+                                        }
                                     }
-                                } else {
-                                    ChyronMessage {
-                                        text: text.to_string(),
-                                        ttl: DEFAULT_TTL,
+                                    Err(e) => {
+                                        eprintln!("MQTT: Invalid JSON '{}': {}", raw, e);
                                     }
-                                };
-                                if sender.send(msg).is_err() {
-                                    // Main thread gone, exit
-                                    break;
                                 }
                             }
                         }
