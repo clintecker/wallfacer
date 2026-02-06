@@ -180,20 +180,12 @@ impl Effect for GravityBalls {
             ball.hue = (ball.hue + dt * 30.0) % 360.0;
         }
 
-        // Check average activity - reset balls if too slow
-        let avg_speed: f32 = self
-            .balls
-            .iter()
-            .map(|b| (b.vx * b.vx + b.vy * b.vy).sqrt())
-            .sum::<f32>()
-            / self.balls.len() as f32;
-
-        const MIN_ACTIVITY: f32 = 30.0; // Minimum average speed threshold
-        if avg_speed < MIN_ACTIVITY {
-            // Reset half the balls with fresh energy
-            let num_to_reset = self.balls.len() / 2;
-            for ball in self.balls.iter_mut().take(num_to_reset) {
-                // Launch from random position near top
+        // Reset individual balls that are too slow (stuck or settled)
+        const MIN_BALL_SPEED: f32 = 25.0;
+        for ball in &mut self.balls {
+            let speed = (ball.vx * ball.vx + ball.vy * ball.vy).sqrt();
+            if speed < MIN_BALL_SPEED {
+                // This ball is stuck - reset it with fresh energy
                 ball.x = self.rng.next_f32() * w;
                 ball.y = self.rng.next_f32() * h * 0.3; // Top 30%
                 ball.vx = (self.rng.next_f32() - 0.5) * 300.0;
